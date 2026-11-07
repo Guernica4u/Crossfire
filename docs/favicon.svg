@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Crossfire">
+  <rect width="64" height="64" rx="32" fill="#f2efe7" />
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#1c1a15" stroke-width="1.5" />
+  <path d="M25 23l10 18M39 23L29 41" stroke="#b5472d" stroke-width="2.5" stroke-linecap="round" />
+</svg>

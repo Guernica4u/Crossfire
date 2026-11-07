@@ -1,0 +1,17 @@
+*.log
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*.local
+.env.local
+.next
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+data/*.secret
+data/control-panel/
+data/pool.secret
+node_modules
+out
+data/.tmp/

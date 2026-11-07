@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Crossfire — Control Panel</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>
+            <span class="brand-word">CROSSFIRE</span>
+            <span class="brand-sub">CONTROL PANEL</span>
+          </span>
+        </div>
+        <div class="top-meta">
+          <span class="pill" id="panel-pill" data-state="live"><span class="dot"></span><span id="panel-pill-text">LOCAL PANEL</span></span>
+          <span class="pill" id="app-pill" data-state="checking"><span class="dot"></span><span id="app-pill-text">CHECKING</span></span>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow">Local control room</div>
+            <h1 id="hero-title">Waking the arena.</h1>
+            <p id="hero-sub">Checking the server, the key, and the free pool.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" id="open-app" type="button">
+                Open Crossfire
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+              </button>
+              <button class="btn" id="start-app" type="button">Start</button>
+              <button class="btn btn-danger" id="stop-app" type="button">Stop</button>
+              <button class="btn btn-ghost" id="restart-app" type="button">Restart</button>
+            </div>
+            <div class="hero-foot">
+              <span id="busy-label" class="busy" hidden><span class="spinner" aria-hidden="true"></span><span id="busy-text"></span></span>
+              <span class="hero-url">localhost:3000</span>
+            </div>
+          </div>
+
+          <aside class="status-card">
+            <div class="status-head">
+              <span class="eyebrow">Arena status</span>
+              <span class="badge" id="app-badge">—</span>
+            </div>
+            <div class="status-row"><span>Server</span><strong id="status-server">—</strong></div>
+            <div class="status-row"><span>Key</span><strong id="status-key">—</strong></div>
+            <div class="status-row"><span>Free pool</span><strong id="status-quota">—</strong></div>
+            <div class="quota-track"><div class="quota-fill" id="quota-fill"></div></div>
+            <div class="status-note" id="status-note">Reading the room…</div>
+            <div class="status-meta"><span id="status-pid">No process</span><span id="status-node">Node —</span></div>
+          </aside>
+        </section>
+
+        <div class="grid">
+          <section class="card key-card">
+            <div class="card-head">
+              <div><div class="eyebrow">Credentials</div><h2>OpenRouter key</h2></div>
+              <span class="badge" id="key-badge">CHECKING</span>
+            </div>
+            <p class="card-copy">Your key is loaded from <code>.env.local</code> and never printed here. Paste a new one only when you want to replace it.</p>
+            <div class="saved-key" id="key-saved">
+              <span class="saved-dot"></span>
+              <div><div class="saved-label">Saved key</div><code id="key-hint">—</code></div>
+            </div>
+            <label class="field-label" for="key-input">Replace key</label>
+            <div class="input-row">
+              <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-v1-…" />
+              <button class="btn btn-sm" id="test-key" type="button">Test</button>
+            </div>
+            <div class="key-actions">
+              <button class="btn btn-primary btn-sm" id="save-key" type="button">Save key</button>
+              <a class="link" href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer">Get a free key ↗</a>
+            </div>
+            <div class="key-result" id="key-result" hidden></div>
+            <p class="fineprint">Saving restarts the app if it is running, so the key takes effect. The file stays local and gitignored.</p>
+          </section>
+
+          <section class="card quick-card">
+            <div class="card-head"><div><div class="eyebrow">Launchpad</div><h2>Every room</h2></div></div>
+            <div class="quick-grid">
+              <button class="quick" data-target="new" type="button">
+                <span class="quick-glyph"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></span>
+                <span class="quick-text"><strong>New debate</strong><small>Question, seats, judge</small></span>
+                <span class="quick-arrow">↗</span>
+              </button>
+              <button class="quick" data-target="app" type="button">
+                <span class="quick-glyph"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M6 7v12h12V7M9 11h6" /></svg></span>
+                <span class="quick-text"><strong>Archive</strong><small>Past rooms and verdicts</small></span>
+                <span class="quick-arrow">↗</span>
+              </button>
+              <button class="quick" data-target="beliefs" type="button">
+                <span class="quick-glyph"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 4v3M12 17v3M4 12h3M17 12h3" /></svg></span>
+                <span class="quick-text"><strong>Belief map</strong><small>The shape of the table</small></span>
+                <span class="quick-arrow">↗</span>
+              </button>
+              <button class="quick" data-target="settings" type="button">
+                <span class="quick-glyph"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="8" cy="17" r="1.5" /></svg></span>
+                <span class="quick-text"><strong>Settings</strong><small>Model pool and storage</small></span>
+                <span class="quick-arrow">↗</span>
+              </button>
+            </div>
+            <div class="quick-foot">
+              <button class="text-button" data-target="data" type="button">Open data folder</button>
+              <button class="text-button" data-target="project" type="button">Open project folder</button>
+            </div>
+          </section>
+
+          <section class="card prefs-card">
+            <div class="card-head"><div><div class="eyebrow">Behavior</div><h2>Hands off</h2></div></div>
+            <label class="toggle-row">
+              <span class="toggle-copy"><strong>Start the arena with the panel</strong><small>Launch the server automatically when this panel opens.</small></span>
+              <span class="toggle-control"><input type="checkbox" id="pref-autostart" /><span class="switch" aria-hidden="true"></span></span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-copy"><strong>Open Crossfire when ready</strong><small>Pop the arena into a new tab after the server responds.</small></span>
+              <span class="toggle-control"><input type="checkbox" id="pref-autoopen" /><span class="switch" aria-hidden="true"></span></span>
+            </label>
+            <div class="prefs-foot">
+              <button class="text-button" id="refresh-status" type="button">Refresh status</button>
+              <button class="text-button danger-text" id="quit-panel" type="button">Quit panel</button>
+            </div>
+          </section>
+
+          <section class="card log-card">
+            <div class="card-head">
+              <div><div class="eyebrow">Diagnostics</div><h2>Server log</h2></div>
+              <button class="btn btn-sm" id="refresh-log" type="button">Refresh</button>
+            </div>
+            <pre id="log" class="log">Loading…</pre>
+            <div class="log-foot"><span>data/control-panel/app.log</span><span>last 80 lines</span></div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>Local only. Bound to 127.0.0.1.</span>
+        <span>Key in <code>.env.local</code> · no account · no paid fallback</span>
+      </footer>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
