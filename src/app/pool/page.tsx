@@ -3,6 +3,7 @@ import { getPoolSnapshot } from "@/lib/pool";
 
 export const dynamic = "force-dynamic";
 
-export default function PoolPage() {
-  return <PoolPanel initialPool={getPoolSnapshot()} />;
+export default async function PoolPage() {
+  const pool = await getPoolSnapshot();
+  return <PoolPanel initialPool={pool} />;
 }

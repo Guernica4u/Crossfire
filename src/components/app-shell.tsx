@@ -18,6 +18,24 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function BrandMark() {
+  return (
+    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
+      <circle cx="20" cy="23" r="8.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="10" cy="32" r="2.7" fill="var(--accent)" />
+      <circle cx="20" cy="35" r="2.7" fill="var(--accent)" />
+      <circle cx="30" cy="32" r="2.7" fill="var(--accent)" />
+      <circle cx="20" cy="5" r="1.8" fill="currentColor" />
+      <path
+        d="M20 8v4.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeDasharray="1.4 2.2"
+      />
+    </svg>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -53,7 +71,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="site-shell">
       <header className="site-header">
         <Link href="/" className="brand" aria-label="Crossfire home">
-          <span className="brand-mark" aria-hidden="true" />
+          <span className="brand-mark" aria-hidden="true">
+            <BrandMark />
+          </span>
           <span>
             <span className="brand-word">CROSSFIRE</span>
             <span className="brand-sub">a room for hard questions</span>
@@ -78,7 +98,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="header-actions">
-          <span className="header-note">Local · free models</span>
+          <span className="header-note">Live · free models</span>
           {themeButton}
         </div>
       </header>

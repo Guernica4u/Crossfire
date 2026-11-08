@@ -61,27 +61,13 @@ button { font: inherit; }
 }
 
 .brand-mark {
-  position: relative;
   width: 25px;
   height: 25px;
   flex: 0 0 auto;
-  border: 1px solid var(--ink);
-  border-radius: 50%;
+  color: var(--ink);
 }
 
-.brand-mark::before,
-.brand-mark::after {
-  position: absolute;
-  top: 6px;
-  width: 1px;
-  height: 12px;
-  content: "";
-  background: var(--ink);
-  transform: rotate(21deg);
-}
-
-.brand-mark::before { left: 8px; opacity: 0.55; }
-.brand-mark::after { right: 8px; background: var(--rust); }
+.brand-mark svg { display: block; width: 100%; height: 100%; }
 
 .brand-word {
   display: block;
@@ -794,23 +780,8 @@ main,
   width: 36px;
   height: 36px;
   margin: 0 auto 25px;
-  border: 1px solid var(--ink);
-  border-radius: 50%;
-  position: relative;
+  color: var(--ink);
 }
-
-.closing-mark::before,
-.closing-mark::after {
-  position: absolute;
-  top: 9px;
-  width: 1px;
-  height: 17px;
-  content: "";
-  background: var(--rust);
-  transform: rotate(21deg);
-}
-.closing-mark::before { left: 11px; }
-.closing-mark::after { right: 11px; opacity: 0.55; }
 
 .closing h2 {
   font-size: clamp(56px, 9vw, 118px);

@@ -6,10 +6,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   let status = await checkKeyStatus();
-  const pool = getPoolSnapshot();
+  const pool = await getPoolSnapshot();
 
   if (!status.configured && pool.active > 0) {
-    const probe = getPoolProbeKey();
+    const probe = await getPoolProbeKey();
     if (probe) {
       const community = await checkKeyStatusForKey(probe.key);
       if (community.configured) {

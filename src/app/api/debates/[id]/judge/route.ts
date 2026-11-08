@@ -15,12 +15,12 @@ export const maxDuration = 120;
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const view = getDebateView(id);
+  const view = await getDebateView(id);
   if (!view) return Response.json({ error: "Debate not found." }, { status: 404 });
   if (view.debate.status === "complete" && view.result) {
     return Response.json({ view, result: view.result });
   }
-  if (getStreamingTurn(id)) {
+  if (await getStreamingTurn(id)) {
     return Response.json({ error: "Wait for the current turn to finish." }, { status: 409 });
   }
 
@@ -36,16 +36,16 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     turns: view.turns,
   });
 
-  updateDebateState(id, {
+  await updateDebateState(id, {
     phase: "judging",
     round: view.debate.round,
     nextSpeakerIndex: 0,
     status: "judging",
   });
 
-  const keyCandidates = getKeyCandidates();
+  const keyCandidates = await getKeyCandidates();
   if (keyCandidates.length === 0) {
-    updateDebateStatus(id, "paused");
+    await updateDebateStatus(id, "paused");
     return Response.json(
       { error: "No API key is available for the judge. Add one in Settings or the public pool." },
       { status: 503 },
@@ -57,7 +57,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
   for (const model of chain) {
     const candidate = keyCandidates[chain.indexOf(model) % keyCandidates.length];
-    noteCandidateUsed(candidate);
+    await noteCandidateUsed(candidate);
     try {
       const raw = await completeChat({
         model,
@@ -71,19 +71,19 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       });
       const parsed = parseJudgeJson(raw);
       const result = normalizeJudgeResult(parsed, view.agents, raw);
-      saveJudgeResult(id, result);
-      const updated = getDebateView(id);
+      await saveJudgeResult(id, result);
+      const updated = await getDebateView(id);
       return Response.json({ view: updated, result: updated?.result ?? result });
     } catch (error) {
       lastError = error;
       if (error instanceof OpenRouterError && (error.status === 401 || error.status === 403)) {
-        noteCandidateRejected(candidate);
+        await noteCandidateRejected(candidate);
       }
       // A malformed verdict is worth one attempt on another free model.
     }
   }
 
-  updateDebateStatus(id, "paused");
+  await updateDebateStatus(id, "paused");
   const message =
     lastError instanceof Error
       ? lastError.message

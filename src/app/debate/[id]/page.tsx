@@ -13,7 +13,7 @@ export default async function DebatePage({
 }) {
   const { id } = await params;
   const query = await searchParams;
-  const view = getDebateView(id);
+  const view = await getDebateView(id);
   if (!view) notFound();
 
   return (

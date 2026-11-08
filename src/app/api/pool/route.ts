@@ -22,7 +22,7 @@ function sameOrigin(request: Request): boolean {
 }
 
 export async function GET() {
-  return Response.json({ pool: getPoolSnapshot() }, { headers: NO_STORE });
+  return Response.json({ pool: await getPoolSnapshot() }, { headers: NO_STORE });
 }
 
 export async function POST(request: Request) {

@@ -1,12 +1,12 @@
 # Crossfire
 
-**A room for hard questions.** Three free AI models take committed positions around a table, argue in rounds, and answer a judge at the far end. You can cut in at any time. Every transcript stays in a local SQLite file.
+**A room for hard questions.** Three free AI models take committed positions around a table, argue in rounds, and answer a judge at the far end. You can cut in at any time. Every transcript is kept in the shared archive.
 
+- **Live app:** https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page
 - **Project front door:** https://guernica4u.github.io/crossfire-arena/
-- **Live app:** run it locally on `http://localhost:3000`
-- **Control Panel:** `http://127.0.0.1:4310/`
+- **Source:** https://github.com/Guernica4u/crossfire-arena
 
-Crossfire is designed for OpenRouter's free model pool. There is no billing path and no paid fallback.
+Crossfire runs as a Next.js app on Freebuff Sites, with Cloudflare D1 for persistence. It is designed for OpenRouter's free model pool. There is no billing path and no paid fallback.
 
 ## The room
 
@@ -17,13 +17,20 @@ The debate room is a single stage rather than a dashboard:
 - The evaluation rail shows each voice's share of the floor while the debate runs. It becomes the judge's real scorecard when the verdict is recorded.
 - The transcript is a quiet, readable exchange below the stage. Audience cut-ins become part of the transcript.
 - The default theme is warm paper and ink with a rust accent. A dark variant is available from the header.
+- Press **Listen live** to hear each new turn, or use the speaker beside any completed turn. Audio uses the browser's built-in speech voices, so no extra key or service is required.
 
-## Requirements
+## Use the hosted app
 
-- Node.js 24 or newer (`node:sqlite` is built in)
-- An [OpenRouter](https://openrouter.ai/) API key. Free-tier keys are enough.
+Open the live app above. No local setup is needed.
 
-## Setup
+The owner key and the public-pool encryption secret are server-side deployment secrets. They are never sent to the browser. Debate transcripts and community pool records live in the deployment's D1 database.
+
+## Run it locally
+
+Requirements:
+
+- Node.js 24 or newer
+- An [OpenRouter](https://openrouter.ai/) free-tier API key
 
 ```bash
 git clone https://github.com/Guernica4u/crossfire-arena.git
@@ -32,21 +39,22 @@ npm install
 cp .env.example .env.local   # Windows: copy .env.example .env.local
 ```
 
-Add your key to `.env.local`:
+Add both values to `.env.local`:
 
 ```dotenv
 OPENROUTER_API_KEY=sk-or-...
+CROSSFIRE_POOL_SECRET=use-a-long-random-server-side-value
 ```
 
-Then start the app.
-
-On Windows, double-click `Crossfire.vbs` (or `start-crossfire.cmd`). On any platform:
+Then start the app:
 
 ```bash
-npm run go
+npm run dev
 ```
 
-The Control Panel finds the key, can save a replacement, starts the local Next.js server, and opens the arena. The full key is never printed in the panel or sent to the browser.
+On Windows, `npm run go` opens the local Control Panel, which can save the key and start the app. The Control Panel binds to loopback only.
+
+Local development uses the same D1 code path through the OpenNext development adapter. The schema is created on first use.
 
 ## The public pool
 
@@ -55,36 +63,37 @@ The owner key is the first key used. When it is missing or rate-limited, Crossfi
 What the pool guarantees:
 
 - **Free-tier only.** A contributed key is checked against OpenRouter before it is accepted. Paid keys are rejected.
-- **Encrypted at rest.** Keys are sealed with AES-256-GCM. The interface only ever receives a last-four hint, a label, and timestamps.
+- **Encrypted at rest.** Keys are sealed with AES-256-GCM using the Web Crypto API. The interface only ever receives a last-four hint, a label, and timestamps.
 - **Owner first.** Community keys are only selected after the owner key has failed on a retryable error.
 - **Free models only.** Pool keys are passed into the same free-model chain. No paid model is used.
 - **Fail closed.** A key that OpenRouter rejects with `401` or `403` is marked invalid and removed from future selection.
 - **Revocable.** A contributor can revoke the key in OpenRouter at any time. The app will drop the rejected key.
 
-By default, the encryption secret is generated once at `data/pool.secret` (gitignored). When self-hosting, set a long random `CROSSFIRE_POOL_SECRET` in the server environment instead, and back it up separately from the database. Losing the secret makes existing pool entries unreadable.
+`CROSSFIRE_POOL_SECRET` is required wherever the pool is enabled. Keep it stable and back it up separately from the database. Losing the secret makes existing pool entries unreadable.
 
-The contribution endpoint is rate-limited and same-origin protected. Do not run the pool on a public HTTP origin: terminate TLS at a reverse proxy and put appropriate request limits in front of the Node process. Contributed keys are bearer credentials; only contribute a key you are willing to have used by the app owner and other users of that deployment.
+The contribution endpoint is rate-limited and same-origin protected. Contributed keys are bearer credentials; only contribute a key you are willing to have used by the app owner and other users of that deployment.
 
-## GitHub Pages
+## Deployment
 
-`docs/` is a static project front door deployed with GitHub Pages. It shows the room, documents the pool, and links to setup.
+The hosted app is a Cloudflare Worker produced by OpenNext, with a D1 binding named `DB`. Preview and production use isolated D1 databases. The schema is applied at runtime on first access.
 
-GitHub Pages **cannot run this application**. The arena needs a Node server for:
+Deployment secrets must be set in the hosting environment:
 
-- SQLite transcripts and verdicts
-- server-sent event streaming
-- OpenRouter calls with server-side keys
-- encrypted pool storage
+- `OPENROUTER_API_KEY`
+- `CROSSFIRE_POOL_SECRET`
 
-The live arena is local-first by design. To share a working arena, deploy the Next.js app to a Node host you control, then point the Pages site at that URL.
+Do not commit either value. `.env.local` is for local development only.
+
+`docs/` is a static project front door deployed with GitHub Pages. GitHub Pages cannot run the arena itself: the app needs a Worker for API routes, server-sent events, D1 storage, and server-side keys. The Pages front door links to the hosted app.
 
 ## Architecture
 
 - Next.js App Router, React, TypeScript, Tailwind CSS v4.
-- SQLite through Node's built-in `node:sqlite` in `src/lib/db.ts`; the database is `data/crossfire.db`.
+- Cloudflare Worker via `@opennextjs/cloudflare`, deployed with Freebuff Sites.
+- Cloudflare D1 through the `DB` binding in `src/lib/db.ts`; schema creation and all debate/pool persistence are async.
 - Debate turns stream as server-sent events from `src/app/api/debates/[id]/turn`.
 - OpenRouter calls live in `src/lib/openrouter.ts`. A turn retries across free models, and across available owner/community keys, before giving up.
-- The pool lives in `src/lib/pool.ts`; key records and public summaries live in `src/lib/db.ts`. The contribution UI is `/pool`.
+- The pool lives in `src/lib/pool.ts`; it uses Web Crypto AES-GCM and HMAC. Key records and public summaries live in `src/lib/db.ts`. The contribution UI is `/pool`.
 - The Control Panel is a separate local Node process on `127.0.0.1:4310`; it binds to loopback and uses a per-run session token.
 - Prompts and the judge JSON contract live in `src/lib/prompt.ts`.
 - Model and persona presets live in `src/lib/agents.ts`.
@@ -92,19 +101,17 @@ The live arena is local-first by design. To share a working arena, deploy the Ne
 
 ## Scripts
 
-- `npm run go` — open the Control Panel (starts the app, manages the key, opens the arena).
-- `npm run serve` — terminal-only launcher without the Control Panel.
-- `npm run dev` — development server only.
-- `npm run build` — production build.
-- `npm run start` — serve the production build.
+- `npm run dev` — local development server.
+- `npm run go` — open the local Control Panel (starts the app, manages the key, opens the arena).
+- `npm run serve` — terminal-only local launcher without the Control Panel.
+- `npm run build` — production Next.js build.
 - `node scripts/run-turns.js <debateId> [count]` — drive turns from a terminal while `npm run dev` is running.
 - `node scripts/run-judge.js <debateId>` — trigger the judge.
-- `node scripts/cleanup-test.js` — remove empty interrupted/error turns and reactivate paused incomplete debates.
 
 ## Notes
 
 - The free pool has a daily request cap, and free models are frequently rate-limited. A quick one-round debate uses around ten model calls.
-- No account, billing path, paid fallback, or cloud storage is configured. The API keys stay on the server and are never sent to the browser.
+- No account, billing path, or paid fallback is configured. API keys stay on the server and are never sent to the browser.
 - Verdicts are structured interpretations of the transcript, not fact checks.
-- To reset all history, stop the server and delete `data/crossfire.db` and its `-wal` / `-shm` files. Delete `data/pool.secret` as well if you want a fresh pool encryption key.
 - Free model providers may log prompts. Do not debate private information.
+- The shared archive is visible to anyone with access to the deployment.

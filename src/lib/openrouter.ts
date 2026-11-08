@@ -37,7 +37,7 @@ function getKey(): string {
   const key = process.env.OPENROUTER_API_KEY?.trim();
   if (!key) {
     throw new OpenRouterError(
-      "No OpenRouter key is configured. Add OPENROUTER_API_KEY to .env.local.",
+      "No OpenRouter key is configured. Set OPENROUTER_API_KEY as a server secret.",
       401,
     );
   }

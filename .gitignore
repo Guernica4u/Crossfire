@@ -15,3 +15,7 @@ data/pool.secret
 node_modules
 out
 data/.tmp/
+/freebuff-sites-build/
+/.open-next/
+/.wrangler/
+.tmp/

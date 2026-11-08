@@ -36,6 +36,11 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "freebuff.open-next.config.ts",
+    "open-next.config.ts",
+    "freebuff-sites-build",
+    ".open-next",
+    ".tmp"
   ]
 }

@@ -6,8 +6,8 @@ import { formatShortDate, pct } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default function BeliefsPage() {
-  const beliefs = getBeliefView();
+export default async function BeliefsPage() {
+  const beliefs = await getBeliefView();
   const totalStances =
     beliefs.stanceTotals.for + beliefs.stanceTotals.against + beliefs.stanceTotals.undecided;
 

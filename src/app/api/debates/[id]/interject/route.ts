@@ -11,7 +11,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       turnId?: string | null;
       partial?: string;
     };
-    const view = insertUserInterjection(
+    const view = await insertUserInterjection(
       id,
       String(body.content ?? ""),
       body.turnId ? String(body.turnId) : null,

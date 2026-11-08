@@ -19,7 +19,7 @@ import {
   noteCandidateRejected,
   noteCandidateUsed,
 } from "@/lib/pool";
-import type { Debate, DebatePhase } from "@/lib/types";
+import type { Debate, DebatePhase, DebateView } from "@/lib/types";
 import { looksLikeMetaReasoning } from "@/lib/utils";
 
 export const runtime = "nodejs";
@@ -63,7 +63,7 @@ function nextStateAfterTurn(debate: Debate): {
   return { phase: "judging", round: debate.round, nextSpeakerIndex: 0 };
 }
 
-function immediateDone(view: ReturnType<typeof getDebateView>, needsJudge: boolean): Response {
+function immediateDone(view: DebateView, needsJudge: boolean): Response {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(sse("done", { view, needsJudge }));
@@ -82,7 +82,7 @@ function immediateDone(view: ReturnType<typeof getDebateView>, needsJudge: boole
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const view = getDebateView(id);
+  const view = await getDebateView(id);
   if (!view) return Response.json({ error: "Debate not found." }, { status: 404 });
 
   if (view.debate.phase === "complete" || view.debate.status === "complete") {
@@ -98,7 +98,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   }
 
-  const stale = getStreamingTurn(id);
+  const stale = await getStreamingTurn(id);
   if (stale) {
     const age = Date.now() - new Date(stale.createdAt).getTime();
     if (age < 120_000) {
@@ -106,19 +106,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     const interruptedAgent = view.agents.find((agent) => agent.id === stale.agentId);
     if (stale.content.trim()) {
-      markTurnInterrupted(stale.id, stale.content);
+      await markTurnInterrupted(stale.id, stale.content);
     } else {
-      discardStreamingTurn(stale.id);
+      await discardStreamingTurn(stale.id);
     }
-    if (interruptedAgent?.role === "debater") setNextSpeaker(id, interruptedAgent.position);
-    updateDebateStatus(id, "active");
+    if (interruptedAgent?.role === "debater") await setNextSpeaker(id, interruptedAgent.position);
+    await updateDebateStatus(id, "active");
   }
 
   const debaters = view.agents.filter((agent) => agent.role === "debater");
   const speaker = debaters[Math.min(debaters.length - 1, Math.max(0, view.debate.nextSpeakerIndex))];
   if (!speaker) return Response.json({ error: "This debate has no debaters." }, { status: 500 });
 
-  const keyCandidates = getKeyCandidates();
+  const keyCandidates = await getKeyCandidates();
   if (keyCandidates.length === 0) {
     return Response.json(
       { error: "No API key is available. Add one in Settings or contribute a free key to the public pool." },
@@ -127,7 +127,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const turnId = crypto.randomUUID();
-  const turn = insertTurn({
+  const turn = await insertTurn({
     id: turnId,
     debateId: id,
     agentId: speaker.id,
@@ -154,17 +154,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   let partial = "";
   let turnFinished = false;
 
-  const persistAbort = () => {
+  const persistAbort = async () => {
     if (turnFinished) return;
-    const current = getTurn(turnId);
+    const current = await getTurn(turnId);
     if (current?.status !== "streaming") return;
     if (partial.trim()) {
-      markTurnInterrupted(turnId, partial.trim());
+      await markTurnInterrupted(turnId, partial.trim());
     } else {
-      discardStreamingTurn(turnId);
+      await discardStreamingTurn(turnId);
     }
-    setNextSpeaker(id, speaker.position);
-    updateDebateStatus(id, "paused");
+    await setNextSpeaker(id, speaker.position);
+    await updateDebateStatus(id, "paused");
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -190,7 +190,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const onRequestAbort = () => {
         aborted = true;
         upstream?.abort();
-        persistAbort();
+        void persistAbort();
       };
       request.signal.addEventListener("abort", onRequestAbort, { once: true });
 
@@ -231,7 +231,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           const candidate = keyCandidates[keyAttempt % keyCandidates.length];
           const attempt = keyAttempt;
           keyAttempt += 1;
-          noteCandidateUsed(candidate);
+          await noteCandidateUsed(candidate);
 
           try {
             if (model !== speaker.model) {
@@ -301,7 +301,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             const name = error instanceof Error ? error.name : "";
             if (aborted || name === "AbortError") throw error;
             if (error instanceof OpenRouterError && (error.status === 401 || error.status === 403)) {
-              noteCandidateRejected(candidate);
+              await noteCandidateRejected(candidate);
             }
             // If a model already produced text, retrying would duplicate it.
             if (content.trim().length > 0) throw error;
@@ -317,7 +317,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           throw lastError instanceof Error ? lastError : new Error("No model produced a response.");
         }
 
-        const finalized = finalizeStreamingTurn(turnId, content.trim(), usedModel);
+        const finalized = await finalizeStreamingTurn(turnId, content.trim(), usedModel);
         if (!finalized) {
           turnFinished = true;
           close();
@@ -325,8 +325,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         }
 
         turnFinished = true;
-        updateDebateState(id, nextState);
-        const updated = getDebateView(id);
+        await updateDebateState(id, nextState);
+        const updated = await getDebateView(id);
         send("done", {
           view: updated,
           needsJudge: nextState.phase === "judging",
@@ -334,20 +334,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       } catch (error) {
         const name = error instanceof Error ? error.name : "";
         if (aborted || name === "AbortError") {
-          persistAbort();
+          await persistAbort();
         } else {
-          const current = getTurn(turnId);
+          const current = await getTurn(turnId);
           if (current?.status === "interrupted") {
             turnFinished = true;
           } else {
             const message =
               error instanceof Error ? error.message : "The model could not respond.";
             if (partial.trim()) {
-              failStreamingTurn(turnId, partial.trim(), message);
+              await failStreamingTurn(turnId, partial.trim(), message);
             } else {
-              discardStreamingTurn(turnId);
+              await discardStreamingTurn(turnId);
             }
-            updateDebateStatus(id, "error");
+            await updateDebateStatus(id, "error");
             turnFinished = true;
             send("error", {
               message,
@@ -363,7 +363,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     cancel() {
       aborted = true;
       upstream?.abort();
-      persistAbort();
+      void persistAbort();
     },
   });
 

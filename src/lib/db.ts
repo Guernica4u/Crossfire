@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { AGENT_PRESETS, DEFAULT_JUDGE_MODEL, JUDGE_PRESET, MODEL_CATALOG, getModel } from "@/lib/agents";
 import type {
   AgentPosition,
@@ -17,94 +15,139 @@ import type {
 } from "@/lib/types";
 import { safeJson } from "@/lib/utils";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "crossfire.db");
-
 type Row = Record<string, unknown>;
 
-const globalForDb = globalThis as unknown as { crossfireDb?: DatabaseSync };
+type D1PreparedStatement = {
+  bind(...values: unknown[]): D1PreparedStatement;
+  first<T = Row>(): Promise<T | null>;
+  all<T = Row>(): Promise<{ results?: T[] }>;
+  run(): Promise<{ meta?: { changes?: number } }>;
+};
 
-function createDatabase(): DatabaseSync {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const database = new DatabaseSync(DB_PATH);
-  database.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
+type D1Database = {
+  prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<unknown>;
+};
 
-    CREATE TABLE IF NOT EXISTS debates (
-      id TEXT PRIMARY KEY,
-      topic TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      phase TEXT NOT NULL DEFAULT 'opening',
-      round INTEGER NOT NULL DEFAULT 0,
-      rounds INTEGER NOT NULL DEFAULT 1,
-      next_speaker_index INTEGER NOT NULL DEFAULT 0,
-      result_json TEXT,
-      summary TEXT,
-      winner_agent_id TEXT,
-      tags_json TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      completed_at TEXT
-    );
+type AppEnv = {
+  DB?: D1Database;
+};
 
-    CREATE TABLE IF NOT EXISTS debate_agents (
-      id TEXT PRIMARY KEY,
-      debate_id TEXT NOT NULL,
-      preset_key TEXT,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL,
-      model TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      color TEXT NOT NULL,
-      persona TEXT NOT NULL,
-      stance TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      FOREIGN KEY (debate_id) REFERENCES debates(id) ON DELETE CASCADE
-    );
+const globalForDb = globalThis as unknown as {
+  crossfireSchemaReady?: Promise<void>;
+};
 
-    CREATE TABLE IF NOT EXISTS turns (
-      id TEXT PRIMARY KEY,
-      debate_id TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      agent_id TEXT,
-      role TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      content TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'complete',
-      model TEXT,
-      error TEXT,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (debate_id) REFERENCES debates(id) ON DELETE CASCADE,
-      UNIQUE (debate_id, seq)
-    );
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS debates (
+    id TEXT PRIMARY KEY,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    phase TEXT NOT NULL DEFAULT 'opening',
+    round INTEGER NOT NULL DEFAULT 0,
+    rounds INTEGER NOT NULL DEFAULT 1,
+    next_speaker_index INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    summary TEXT,
+    winner_agent_id TEXT,
+    tags_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+  );
 
-    CREATE INDEX IF NOT EXISTS idx_debate_agents_debate ON debate_agents(debate_id, position);
-    CREATE INDEX IF NOT EXISTS idx_turns_debate ON turns(debate_id, seq);
+  CREATE TABLE IF NOT EXISTS debate_agents (
+    id TEXT PRIMARY KEY,
+    debate_id TEXT NOT NULL,
+    preset_key TEXT,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    color TEXT NOT NULL,
+    persona TEXT NOT NULL,
+    stance TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    FOREIGN KEY (debate_id) REFERENCES debates(id) ON DELETE CASCADE
+  );
 
-    CREATE TABLE IF NOT EXISTS pool_keys (
-      id TEXT PRIMARY KEY,
-      fingerprint TEXT NOT NULL UNIQUE,
-      hint TEXT NOT NULL,
-      label TEXT,
-      contributor TEXT,
-      encrypted_key TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      error TEXT,
-      created_at TEXT NOT NULL,
-      last_used_at TEXT,
-      last_checked_at TEXT
-    );
-  `);
+  CREATE TABLE IF NOT EXISTS turns (
+    id TEXT PRIMARY KEY,
+    debate_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    agent_id TEXT,
+    role TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'complete',
+    model TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (debate_id) REFERENCES debates(id) ON DELETE CASCADE,
+    UNIQUE (debate_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_debate_agents_debate ON debate_agents(debate_id, position);
+  CREATE INDEX IF NOT EXISTS idx_turns_debate ON turns(debate_id, seq);
+  CREATE INDEX IF NOT EXISTS idx_debates_created ON debates(created_at);
+
+  CREATE TABLE IF NOT EXISTS pool_keys (
+    id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    hint TEXT NOT NULL,
+    label TEXT,
+    contributor TEXT,
+    encrypted_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    last_checked_at TEXT
+  );
+`;
+
+function binding(): D1Database {
+  const { env } = getCloudflareContext();
+  const database = (env as unknown as AppEnv).DB;
+  if (!database) {
+    throw new Error("The hosted DB binding is not configured.");
+  }
   return database;
 }
 
-function getDb(): DatabaseSync {
-  if (!globalForDb.crossfireDb) {
-    globalForDb.crossfireDb = createDatabase();
+async function getDb(): Promise<D1Database> {
+  const database = binding();
+  if (!globalForDb.crossfireSchemaReady) {
+    const statements = SCHEMA.split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean)
+      .map((statement) => database.prepare(statement));
+    globalForDb.crossfireSchemaReady = database
+      .batch(statements)
+      .then(() => undefined)
+      .catch((error) => {
+        globalForDb.crossfireSchemaReady = undefined;
+        throw error;
+      });
   }
-  return globalForDb.crossfireDb;
+  await globalForDb.crossfireSchemaReady;
+  return database;
+}
+
+async function all<T>(query: string, values: unknown[] = []): Promise<T[]> {
+  const database = await getDb();
+  const result = await database.prepare(query).bind(...values).all<T>();
+  return result.results ?? [];
+}
+
+async function first<T>(query: string, values: unknown[] = []): Promise<T | null> {
+  const database = await getDb();
+  return (await database.prepare(query).bind(...values).first<T>()) ?? null;
+}
+
+async function execute(query: string, values: unknown[] = []): Promise<number> {
+  const database = await getDb();
+  const result = await database.prepare(query).bind(...values).run();
+  return Number(result.meta?.changes ?? 0);
 }
 
 function mapDebate(row: Row): Debate {
@@ -175,8 +218,8 @@ export interface CreateDebateInput {
   judgeModel?: string;
 }
 
-export function createDebate(input: CreateDebateInput): DebateView {
-  const database = getDb();
+export async function createDebate(input: CreateDebateInput): Promise<DebateView> {
+  const database = await getDb();
   const topic = input.topic.trim();
   if (topic.length < 4) throw new Error("Give the debate a topic with at least 4 characters.");
   if (topic.length > 280) throw new Error("Keep the topic under 280 characters.");
@@ -228,132 +271,120 @@ export function createDebate(input: CreateDebateInput): DebateView {
     position: 3,
   };
 
-  database.exec("BEGIN IMMEDIATE");
-  try {
+  const statements = [
     database
       .prepare(
         `INSERT INTO debates
           (id, topic, status, phase, round, rounds, next_speaker_index, created_at, updated_at)
          VALUES (?, ?, 'active', 'opening', 0, ?, 0, ?, ?)`,
       )
-      .run(debateId, topic, rounds, now, now);
+      .bind(debateId, topic, rounds, now, now),
+    ...([...rows, judge].map((row) =>
+      database
+        .prepare(
+          `INSERT INTO debate_agents
+            (id, debate_id, preset_key, name, role, model, provider, color, persona, stance, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.debateId,
+          row.presetKey,
+          row.name,
+          row.role,
+          row.model,
+          row.provider,
+          row.color,
+          row.persona,
+          row.stance,
+          row.position,
+        ),
+    )),
+  ];
 
-    const insertAgent = database.prepare(
-      `INSERT INTO debate_agents
-        (id, debate_id, preset_key, name, role, model, provider, color, persona, stance, position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
+  await database.batch(statements);
 
-    for (const row of [...rows, judge]) {
-      insertAgent.run(
-        row.id,
-        row.debateId,
-        row.presetKey,
-        row.name,
-        row.role,
-        row.model,
-        row.provider,
-        row.color,
-        row.persona,
-        row.stance,
-        row.position,
-      );
-    }
-
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
-
-  const view = getDebateView(debateId);
+  const view = await getDebateView(debateId);
   if (!view) throw new Error("Could not create the debate.");
   return view;
 }
 
-export function getDebateView(id: string): DebateView | null {
-  const database = getDb();
-  const debateRow = database.prepare("SELECT * FROM debates WHERE id = ?").get(id) as Row | undefined;
+export async function getDebateView(id: string): Promise<DebateView | null> {
+  const debateRow = await first<Row>("SELECT * FROM debates WHERE id = ?", [id]);
   if (!debateRow) return null;
   const debate = mapDebate(debateRow);
-  const agents = (database
-    .prepare("SELECT * FROM debate_agents WHERE debate_id = ? ORDER BY position ASC")
-    .all(id) as Row[]).map(mapAgent);
-  const turns = (database
-    .prepare("SELECT * FROM turns WHERE debate_id = ? ORDER BY seq ASC")
-    .all(id) as Row[]).map(mapTurn);
+  const [agents, turns] = await Promise.all([
+    all<Row>("SELECT * FROM debate_agents WHERE debate_id = ? ORDER BY position ASC", [id]),
+    all<Row>("SELECT * FROM turns WHERE debate_id = ? ORDER BY seq ASC", [id]),
+  ]);
 
   return {
     debate,
-    agents,
-    turns,
+    agents: agents.map(mapAgent),
+    turns: turns.map(mapTurn),
     result: parseResult(debate.resultJson),
   };
 }
 
-export function getDebate(id: string): Debate | null {
-  const database = getDb();
-  const row = database.prepare("SELECT * FROM debates WHERE id = ?").get(id) as Row | undefined;
+export async function getDebate(id: string): Promise<Debate | null> {
+  const row = await first<Row>("SELECT * FROM debates WHERE id = ?", [id]);
   return row ? mapDebate(row) : null;
 }
 
-export function getDebateAgents(debateId: string): DebateAgent[] {
-  const database = getDb();
-  return (database
-    .prepare("SELECT * FROM debate_agents WHERE debate_id = ? ORDER BY position ASC")
-    .all(debateId) as Row[]).map(mapAgent);
+export async function getDebateAgents(debateId: string): Promise<DebateAgent[]> {
+  const rows = await all<Row>(
+    "SELECT * FROM debate_agents WHERE debate_id = ? ORDER BY position ASC",
+    [debateId],
+  );
+  return rows.map(mapAgent);
 }
 
-export function getTurns(debateId: string): Turn[] {
-  const database = getDb();
-  return (database
-    .prepare("SELECT * FROM turns WHERE debate_id = ? ORDER BY seq ASC")
-    .all(debateId) as Row[]).map(mapTurn);
+export async function getTurns(debateId: string): Promise<Turn[]> {
+  const rows = await all<Row>("SELECT * FROM turns WHERE debate_id = ? ORDER BY seq ASC", [debateId]);
+  return rows.map(mapTurn);
 }
 
-export function getTurn(id: string): Turn | null {
-  const database = getDb();
-  const row = database.prepare("SELECT * FROM turns WHERE id = ?").get(id) as Row | undefined;
+export async function getTurn(id: string): Promise<Turn | null> {
+  const row = await first<Row>("SELECT * FROM turns WHERE id = ?", [id]);
   return row ? mapTurn(row) : null;
 }
 
-export function getStreamingTurn(debateId: string): Turn | null {
-  const database = getDb();
-  const row = database
-    .prepare("SELECT * FROM turns WHERE debate_id = ? AND status = 'streaming' ORDER BY seq DESC LIMIT 1")
-    .get(debateId) as Row | undefined;
+export async function getStreamingTurn(debateId: string): Promise<Turn | null> {
+  const row = await first<Row>(
+    "SELECT * FROM turns WHERE debate_id = ? AND status = 'streaming' ORDER BY seq DESC LIMIT 1",
+    [debateId],
+  );
   return row ? mapTurn(row) : null;
 }
 
-export function updateDebateStatus(id: string, status: DebateStatus): void {
-  const database = getDb();
-  database
-    .prepare("UPDATE debates SET status = ?, updated_at = ? WHERE id = ?")
-    .run(status, new Date().toISOString(), id);
+export async function updateDebateStatus(id: string, status: DebateStatus): Promise<void> {
+  await execute("UPDATE debates SET status = ?, updated_at = ? WHERE id = ?", [
+    status,
+    new Date().toISOString(),
+    id,
+  ]);
 }
 
-export function updateDebateState(
+export async function updateDebateState(
   id: string,
   state: Pick<Debate, "phase" | "round" | "nextSpeakerIndex"> & { status?: DebateStatus },
-): void {
-  const database = getDb();
-  database
-    .prepare(
-      `UPDATE debates
-       SET phase = ?, round = ?, next_speaker_index = ?, status = COALESCE(?, status), updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(
+): Promise<void> {
+  await execute(
+    `UPDATE debates
+     SET phase = ?, round = ?, next_speaker_index = ?, status = COALESCE(?, status), updated_at = ?
+     WHERE id = ?`,
+    [
       state.phase,
       state.round,
       state.nextSpeakerIndex,
       state.status ?? null,
       new Date().toISOString(),
       id,
-    );
+    ],
+  );
 }
 
-export function insertTurn(input: {
+export async function insertTurn(input: {
   id: string;
   debateId: string;
   agentId: string | null;
@@ -363,23 +394,17 @@ export function insertTurn(input: {
   status: Turn["status"];
   model?: string | null;
   error?: string | null;
-}): Turn {
-  const database = getDb();
-  const row = database
-    .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM turns WHERE debate_id = ?")
-    .get(input.debateId) as Row;
-  const seq = Number(row.next_seq);
+}): Promise<Turn> {
   const now = new Date().toISOString();
-  database
-    .prepare(
-      `INSERT INTO turns
-        (id, debate_id, seq, agent_id, role, phase, content, status, model, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+  await execute(
+    `INSERT INTO turns
+      (id, debate_id, seq, agent_id, role, phase, content, status, model, error, created_at)
+     SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?
+     FROM turns
+     WHERE debate_id = ?`,
+    [
       input.id,
       input.debateId,
-      seq,
       input.agentId,
       input.role,
       input.phase,
@@ -388,11 +413,15 @@ export function insertTurn(input: {
       input.model ?? null,
       input.error ?? null,
       now,
-    );
+      input.debateId,
+    ],
+  );
+  const inserted = await first<Row>("SELECT seq FROM turns WHERE id = ?", [input.id]);
+  if (!inserted) throw new Error("Could not append the turn.");
   return {
     id: input.id,
     debateId: input.debateId,
-    seq,
+    seq: Number(inserted.seq),
     agentId: input.agentId,
     role: input.role,
     phase: input.phase,
@@ -404,156 +433,163 @@ export function insertTurn(input: {
   };
 }
 
-export function updateTurn(
+export async function updateTurn(
   id: string,
   input: { content?: string; status?: Turn["status"]; model?: string | null; error?: string | null },
-): void {
-  const database = getDb();
-  database
-    .prepare(
-      `UPDATE turns
-       SET content = COALESCE(?, content),
-           status = COALESCE(?, status),
-           model = COALESCE(?, model),
-           error = COALESCE(?, error)
-       WHERE id = ?`,
-    )
-    .run(
+): Promise<void> {
+  await execute(
+    `UPDATE turns
+     SET content = COALESCE(?, content),
+         status = COALESCE(?, status),
+         model = COALESCE(?, model),
+         error = COALESCE(?, error)
+     WHERE id = ?`,
+    [
       input.content ?? null,
       input.status ?? null,
       input.model ?? null,
       input.error ?? null,
       id,
-    );
+    ],
+  );
 }
 
-export function markTurnInterrupted(turnId: string, partial: string): void {
-  const database = getDb();
-  database
-    .prepare("UPDATE turns SET content = ?, status = 'interrupted', error = NULL WHERE id = ? AND status = 'streaming'")
-    .run(partial, turnId);
+export async function markTurnInterrupted(turnId: string, partial: string): Promise<void> {
+  await execute(
+    "UPDATE turns SET content = ?, status = 'interrupted', error = NULL WHERE id = ? AND status = 'streaming'",
+    [partial, turnId],
+  );
 }
 
-export function discardStreamingTurn(turnId: string): void {
-  const database = getDb();
-  database.prepare("DELETE FROM turns WHERE id = ? AND status = 'streaming'").run(turnId);
+export async function discardStreamingTurn(turnId: string): Promise<void> {
+  await execute("DELETE FROM turns WHERE id = ? AND status = 'streaming'", [turnId]);
 }
 
-export function finalizeStreamingTurn(turnId: string, content: string, model: string): boolean {
-  const database = getDb();
-  const result = database
-    .prepare(
-      "UPDATE turns SET content = ?, status = 'complete', model = ?, error = NULL WHERE id = ? AND status = 'streaming'",
-    )
-    .run(content, model, turnId);
-  return Number(result.changes) > 0;
+export async function finalizeStreamingTurn(turnId: string, content: string, model: string): Promise<boolean> {
+  const changes = await execute(
+    "UPDATE turns SET content = ?, status = 'complete', model = ?, error = NULL WHERE id = ? AND status = 'streaming'",
+    [content, model, turnId],
+  );
+  return changes > 0;
 }
 
-export function failStreamingTurn(turnId: string, content: string, message: string): boolean {
-  const database = getDb();
-  const result = database
-    .prepare(
-      "UPDATE turns SET content = ?, status = 'error', error = ? WHERE id = ? AND status = 'streaming'",
-    )
-    .run(content, message.slice(0, 1000), turnId);
-  return Number(result.changes) > 0;
+export async function failStreamingTurn(turnId: string, content: string, message: string): Promise<boolean> {
+  const changes = await execute(
+    "UPDATE turns SET content = ?, status = 'error', error = ? WHERE id = ? AND status = 'streaming'",
+    [content, message.slice(0, 1000), turnId],
+  );
+  return changes > 0;
 }
 
-export function setNextSpeaker(id: string, index: number): void {
-  const database = getDb();
-  database
-    .prepare("UPDATE debates SET next_speaker_index = ?, updated_at = ? WHERE id = ?")
-    .run(index, new Date().toISOString(), id);
+export async function setNextSpeaker(id: string, index: number): Promise<void> {
+  await execute("UPDATE debates SET next_speaker_index = ?, updated_at = ? WHERE id = ?", [
+    index,
+    new Date().toISOString(),
+    id,
+  ]);
 }
 
-export function insertUserInterjection(
+export async function insertUserInterjection(
   debateId: string,
   content: string,
   turnId: string | null,
   partial: string,
-): DebateView {
-  const database = getDb();
-  const debate = getDebate(debateId);
+): Promise<DebateView> {
+  const debate = await getDebate(debateId);
   if (!debate) throw new Error("Debate not found.");
 
   const clean = content.trim().slice(0, 2000);
   if (!clean) throw new Error("Write something before cutting in.");
 
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    if (turnId) {
-      const interrupted = getTurn(turnId);
-      if (interrupted && interrupted.status === "streaming") {
-        if (partial.trim()) {
-          markTurnInterrupted(turnId, partial.trim());
-        } else {
-          discardStreamingTurn(turnId);
-        }
-        if (interrupted.agentId) {
-          const agent = getDebateAgents(debateId).find((item) => item.id === interrupted.agentId);
-          if (agent && agent.role === "debater") {
-            setNextSpeaker(debateId, agent.position);
-          }
+  if (turnId) {
+    const interrupted = await getTurn(turnId);
+    if (interrupted && interrupted.status === "streaming") {
+      if (partial.trim()) {
+        await markTurnInterrupted(turnId, partial.trim());
+      } else {
+        await discardStreamingTurn(turnId);
+      }
+      if (interrupted.agentId) {
+        const agent = (await getDebateAgents(debateId)).find((item) => item.id === interrupted.agentId);
+        if (agent && agent.role === "debater") {
+          await setNextSpeaker(debateId, agent.position);
         }
       }
     }
-
-    insertTurn({
-      id: crypto.randomUUID(),
-      debateId,
-      agentId: null,
-      role: "user",
-      phase: "user",
-      content: clean,
-      status: "complete",
-    });
-
-    database
-      .prepare("UPDATE debates SET status = 'active', updated_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), debateId);
-
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
   }
 
-  const view = getDebateView(debateId);
+  await insertTurn({
+    id: crypto.randomUUID(),
+    debateId,
+    agentId: null,
+    role: "user",
+    phase: "user",
+    content: clean,
+    status: "complete",
+  });
+
+  await execute("UPDATE debates SET status = 'active', updated_at = ? WHERE id = ?", [
+    new Date().toISOString(),
+    debateId,
+  ]);
+
+  const view = await getDebateView(debateId);
   if (!view) throw new Error("Could not update the debate.");
   return view;
 }
 
-export function saveJudgeResult(debateId: string, result: JudgeResult): void {
-  const database = getDb();
+export async function saveJudgeResult(debateId: string, result: JudgeResult): Promise<void> {
   const now = new Date().toISOString();
   const winner = result.winnerAgentId
-    ? (getDebateAgents(debateId).find((agent) => agent.id === result.winnerAgentId)?.id ?? null)
+    ? ((await getDebateAgents(debateId)).find((agent) => agent.id === result.winnerAgentId)?.id ?? null)
     : null;
-  database
-    .prepare(
-      `UPDATE debates
-       SET status = 'complete', phase = 'complete', result_json = ?, summary = ?, winner_agent_id = ?,
-           tags_json = ?, completed_at = ?, updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(JSON.stringify(result), result.verdict, winner, JSON.stringify(result.tags ?? []), now, now, debateId);
+  await execute(
+    `UPDATE debates
+     SET status = 'complete', phase = 'complete', result_json = ?, summary = ?, winner_agent_id = ?,
+         tags_json = ?, completed_at = ?, updated_at = ?
+     WHERE id = ?`,
+    [
+      JSON.stringify(result),
+      result.verdict,
+      winner,
+      JSON.stringify(result.tags ?? []),
+      now,
+      now,
+      debateId,
+    ],
+  );
 }
 
-export function listDebates(limit = 30): DebateSummary[] {
-  const database = getDb();
-  const rows = database
-    .prepare(
-      `SELECT d.*, a.name AS winner_name, a.color AS winner_color
-       FROM debates d
-       LEFT JOIN debate_agents a ON a.id = d.winner_agent_id
-       ORDER BY datetime(d.created_at) DESC
-       LIMIT ?`,
-    )
-    .all(limit) as Row[];
+export async function listDebates(limit = 30): Promise<DebateSummary[]> {
+  const rows = await all<Row>(
+    `SELECT d.*, a.name AS winner_name, a.color AS winner_color
+     FROM debates d
+     LEFT JOIN debate_agents a ON a.id = d.winner_agent_id
+     ORDER BY datetime(d.created_at) DESC
+     LIMIT ?`,
+    [limit],
+  );
+
+  const ids = rows.map((row) => String(row.id));
+  const agentRows = ids.length
+    ? await all<Row>(
+        `SELECT * FROM debate_agents
+         WHERE debate_id IN (${ids.map(() => "?").join(", ")})
+         ORDER BY position ASC`,
+        ids,
+      )
+    : [];
+  const agentsByDebate = new Map<string, DebateAgent[]>();
+  for (const row of agentRows) {
+    const agent = mapAgent(row);
+    const list = agentsByDebate.get(agent.debateId) ?? [];
+    list.push(agent);
+    agentsByDebate.set(agent.debateId, list);
+  }
 
   return rows.map((row) => {
     const debate = mapDebate(row);
-    const debaters = getDebateAgents(debate.id).filter((agent) => agent.role === "debater");
+    const debaters = (agentsByDebate.get(debate.id) ?? []).filter((agent) => agent.role === "debater");
     return {
       id: debate.id,
       topic: debate.topic,
@@ -576,38 +612,51 @@ export function listDebates(limit = 30): DebateSummary[] {
   });
 }
 
-export function getDebateStats(): {
+export async function getDebateStats(): Promise<{
   total: number;
   completed: number;
   live: number;
   debaters: number;
-} {
-  const database = getDb();
-  const row = database
-    .prepare(
-      `SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN status IN ('active', 'paused', 'judging') THEN 1 ELSE 0 END) AS live
-       FROM debates`,
-    )
-    .get() as Row;
-  const agents = database
-    .prepare("SELECT COUNT(*) AS count FROM debate_agents WHERE role = 'debater'")
-    .get() as Row;
+}> {
+  const row = await first<Row>(
+    `SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed,
+      SUM(CASE WHEN status IN ('active', 'paused', 'judging') THEN 1 ELSE 0 END) AS live
+     FROM debates`,
+  );
+  const agents = await first<Row>("SELECT COUNT(*) AS count FROM debate_agents WHERE role = 'debater'");
   return {
-    total: Number(row.total ?? 0),
-    completed: Number(row.completed ?? 0),
-    live: Number(row.live ?? 0),
-    debaters: Number(agents.count ?? 0),
+    total: Number(row?.total ?? 0),
+    completed: Number(row?.completed ?? 0),
+    live: Number(row?.live ?? 0),
+    debaters: Number(agents?.count ?? 0),
   };
 }
 
-export function getBeliefView(): BeliefView {
-  const database = getDb();
-  const debates = (database
-    .prepare("SELECT * FROM debates WHERE status = 'complete' AND result_json IS NOT NULL ORDER BY datetime(created_at) DESC")
-    .all() as Row[]).map(mapDebate);
+export async function getBeliefView(): Promise<BeliefView> {
+  const debates = (
+    await all<Row>(
+      "SELECT * FROM debates WHERE status = 'complete' AND result_json IS NOT NULL ORDER BY datetime(created_at) DESC",
+    )
+  ).map(mapDebate);
+
+  const ids = debates.map((debate) => debate.id);
+  const agentRows = ids.length
+    ? await all<Row>(
+        `SELECT * FROM debate_agents
+         WHERE debate_id IN (${ids.map(() => "?").join(", ")})
+         ORDER BY debate_id ASC, position ASC`,
+        ids,
+      )
+    : [];
+  const agentsByDebate = new Map<string, DebateAgent[]>();
+  for (const row of agentRows) {
+    const agent = mapAgent(row);
+    const list = agentsByDebate.get(agent.debateId) ?? [];
+    list.push(agent);
+    agentsByDebate.set(agent.debateId, list);
+  }
 
   const agentMap = new Map<string, BeliefAgent>();
   const stanceTotals: Record<Stance, number> = { for: 0, against: 0, undecided: 0 };
@@ -620,7 +669,7 @@ export function getBeliefView(): BeliefView {
   for (const debate of debates) {
     const result = parseResult(debate.resultJson);
     if (!result) continue;
-    const debaters = getDebateAgents(debate.id).filter((agent) => agent.role === "debater");
+    const debaters = (agentsByDebate.get(debate.id) ?? []).filter((agent) => agent.role === "debater");
     const positions = new Map<string, AgentPosition>(
       (result.positions ?? []).map((position) => [position.agentId, position]),
     );
@@ -753,15 +802,13 @@ function mapPoolKey(row: Row): StoredPoolKey {
   };
 }
 
-export function listStoredPoolKeys(): StoredPoolKey[] {
-  const database = getDb();
-  return (database
-    .prepare("SELECT * FROM pool_keys ORDER BY datetime(created_at) DESC")
-    .all() as Row[]).map(mapPoolKey);
+export async function listStoredPoolKeys(): Promise<StoredPoolKey[]> {
+  const rows = await all<Row>("SELECT * FROM pool_keys ORDER BY datetime(created_at) DESC");
+  return rows.map(mapPoolKey);
 }
 
-export function listPublicPoolKeys(): PublicPoolKey[] {
-  return listStoredPoolKeys().map(({ id, hint, label, contributor, status, createdAt, lastUsedAt }) => ({
+export async function listPublicPoolKeys(): Promise<PublicPoolKey[]> {
+  return (await listStoredPoolKeys()).map(({ id, hint, label, contributor, status, createdAt, lastUsedAt }) => ({
     id,
     hint,
     label,
@@ -772,31 +819,25 @@ export function listPublicPoolKeys(): PublicPoolKey[] {
   }));
 }
 
-export function findPoolKeyByFingerprint(fingerprint: string): StoredPoolKey | null {
-  const database = getDb();
-  const row = database
-    .prepare("SELECT * FROM pool_keys WHERE fingerprint = ?")
-    .get(fingerprint) as Row | undefined;
+export async function findPoolKeyByFingerprint(fingerprint: string): Promise<StoredPoolKey | null> {
+  const row = await first<Row>("SELECT * FROM pool_keys WHERE fingerprint = ?", [fingerprint]);
   return row ? mapPoolKey(row) : null;
 }
 
-export function insertPoolKey(input: {
+export async function insertPoolKey(input: {
   fingerprint: string;
   hint: string;
   label?: string | null;
   contributor?: string | null;
   encryptedKey: string;
-}): PublicPoolKey {
-  const database = getDb();
+}): Promise<PublicPoolKey> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  database
-    .prepare(
-      `INSERT INTO pool_keys
-        (id, fingerprint, hint, label, contributor, encrypted_key, status, created_at, last_checked_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-    )
-    .run(
+  await execute(
+    `INSERT INTO pool_keys
+      (id, fingerprint, hint, label, contributor, encrypted_key, status, created_at, last_checked_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    [
       id,
       input.fingerprint,
       input.hint,
@@ -805,30 +846,42 @@ export function insertPoolKey(input: {
       input.encryptedKey,
       now,
       now,
-    );
-  return { id, hint: input.hint, label: input.label ?? null, contributor: input.contributor ?? null, status: "active", createdAt: now, lastUsedAt: null };
+    ],
+  );
+  return {
+    id,
+    hint: input.hint,
+    label: input.label ?? null,
+    contributor: input.contributor ?? null,
+    status: "active",
+    createdAt: now,
+    lastUsedAt: null,
+  };
 }
 
-export function markPoolKeyUsed(id: string): void {
-  const database = getDb();
-  database.prepare("UPDATE pool_keys SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+export async function markPoolKeyUsed(id: string): Promise<void> {
+  await execute("UPDATE pool_keys SET last_used_at = ? WHERE id = ?", [
+    new Date().toISOString(),
+    id,
+  ]);
 }
 
-export function markPoolKeyStatus(
+export async function markPoolKeyStatus(
   id: string,
   status: StoredPoolKey["status"],
   error?: string | null,
-): void {
-  const database = getDb();
-  database
-    .prepare("UPDATE pool_keys SET status = ?, error = ?, last_checked_at = ? WHERE id = ?")
-    .run(status, error ?? null, new Date().toISOString(), id);
+): Promise<void> {
+  await execute("UPDATE pool_keys SET status = ?, error = ?, last_checked_at = ? WHERE id = ?", [
+    status,
+    error ?? null,
+    new Date().toISOString(),
+    id,
+  ]);
 }
 
-export function countPoolKeys(): { total: number; active: number } {
-  const database = getDb();
-  const row = database
-    .prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM pool_keys")
-    .get() as Row;
-  return { total: Number(row.total ?? 0), active: Number(row.active ?? 0) };
+export async function countPoolKeys(): Promise<{ total: number; active: number }> {
+  const row = await first<Row>(
+    "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM pool_keys",
+  );
+  return { total: Number(row?.total ?? 0), active: Number(row?.active ?? 0) };
 }

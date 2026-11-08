@@ -141,11 +141,11 @@ export default function SettingsPage() {
         <section className="settings-card">
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Database size={15} style={{ color: "var(--accent)" }} />
-            <span className="eyebrow">Local storage</span>
+            <span className="eyebrow">Hosted storage</span>
           </div>
-          <div style={{ marginTop: 13, fontSize: 18, fontWeight: 800 }}>SQLite on this PC</div>
+          <div style={{ marginTop: 13, fontSize: 18, fontWeight: 800 }}>Cloudflare D1</div>
           <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 11, lineHeight: 1.6 }}>
-            Debate transcripts, verdicts, positions, and settings live in
+            Debate transcripts, verdicts, positions, and pool records live in the
             <code
               style={{
                 display: "inline-block",
@@ -157,14 +157,14 @@ export default function SettingsPage() {
                 fontSize: 9,
               }}
             >
-              data/crossfire.db
+              D1 · DB
             </code>
-            . Nothing is uploaded to a Crossfire account because there isn’t one.
+            database for this deployment. There is no Crossfire account.
           </div>
           <div style={{ marginTop: 16 }}>
             <div className="kv">
               <span>Database</span>
-              <strong>data/crossfire.db</strong>
+              <strong>Cloudflare D1</strong>
             </div>
             <div className="kv">
               <span>Accounts</span>
@@ -172,7 +172,7 @@ export default function SettingsPage() {
             </div>
             <div className="kv">
               <span>Hosting</span>
-              <strong>Localhost</strong>
+              <strong>Freebuff Sites</strong>
             </div>
             <div className="kv">
               <span>Paid fallback</span>
@@ -180,8 +180,8 @@ export default function SettingsPage() {
             </div>
           </div>
           <div className="caveat">
-            The key is stored in <code>.env.local</code>, which is gitignored. The app never
-            sends it to the browser.
+            The key is stored as a server-side deployment secret. The app never sends it to
+            the browser.
           </div>
         </section>
 

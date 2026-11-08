@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const view = getDebateView(id);
+  const view = await getDebateView(id);
   if (!view) return Response.json({ error: "Debate not found." }, { status: 404 });
   return Response.json({ view });
 }
@@ -17,13 +17,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.status !== "active" && body.status !== "paused") {
       return Response.json({ error: "Status must be active or paused." }, { status: 400 });
     }
-    const view = getDebateView(id);
+    const view = await getDebateView(id);
     if (!view) return Response.json({ error: "Debate not found." }, { status: 404 });
     if (view.debate.status === "complete") {
       return Response.json({ error: "This debate is already complete." }, { status: 400 });
     }
-    updateDebateStatus(id, body.status);
-    return Response.json({ view: getDebateView(id) });
+    await updateDebateStatus(id, body.status);
+    return Response.json({ view: await getDebateView(id) });
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not update the debate." },

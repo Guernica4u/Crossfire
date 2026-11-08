@@ -1967,38 +1967,26 @@ body::before {
 }
 
 .brand-mark {
-  position: relative;
-  width: 25px;
-  height: 25px;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
-  overflow: hidden;
-  border: 1px solid var(--text);
-  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
   background: transparent;
+  color: var(--text);
 }
 
 .brand-mark::before,
 .brand-mark::after {
-  position: absolute;
-  top: 6px;
-  width: 1px;
-  height: 12px;
-  border-radius: 0;
-  content: "";
-  background: var(--text);
-  transform: rotate(21deg);
+  content: none;
+  display: none;
 }
 
-.brand-mark::before {
-  left: 8px;
-  opacity: 0.55;
-}
-
-.brand-mark::after {
-  right: 8px;
-  left: auto;
-  opacity: 1;
-}
+.brand-mark svg { display: block; width: 100%; height: 100%; }
 
 .brand-word {
   display: block;
@@ -3924,5 +3912,76 @@ body::before {
   .room-after {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Speech
+   -------------------------------------------------------------------------- */
+
+.turn-speak {
+  display: inline-flex;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.turn-speak:hover,
+.turn-speak[data-active="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.listen-toggle[data-active="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--accent-soft);
+}
+
+.speak-button {
+  gap: 5px;
+  cursor: pointer;
+}
+
+.speak-button.is-speaking {
+  color: var(--accent);
+}
+
+.speak-button-icon {
+  display: inline-flex;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--faint);
+  background: transparent;
+}
+
+.speak-button-icon:hover,
+.speak-button-icon.is-speaking {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.result-listen {
+  margin-top: 13px;
+}
+
+@media (max-width: 680px) {
+  .room-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }

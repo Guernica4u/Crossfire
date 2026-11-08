@@ -1,6 +1,7 @@
 import { Gavel, Scale, Sparkles, Trophy } from "lucide-react";
 import type { DebateAgent, JudgeResult } from "@/lib/types";
 import { Avatar, ScoreBar, StanceBadge } from "@/components/ui";
+import { SpeakButton } from "@/components/speak-button";
 import { getModel } from "@/lib/agents";
 
 export function ResultPanel({
@@ -13,6 +14,7 @@ export function ResultPanel({
   const debaters = agents.filter((agent) => agent.role === "debater");
   const byId = new Map(debaters.map((agent) => [agent.id, agent]));
   const winner = result.winnerAgentId ? byId.get(result.winnerAgentId) : null;
+  const judge = agents.find((agent) => agent.role === "judge");
 
   return (
     <section className="result-wrap fade-in">
@@ -31,6 +33,13 @@ export function ResultPanel({
           )}
         </h2>
         <p className="result-verdict">{result.verdict}</p>
+        <SpeakButton
+          id="verdict"
+          text={result.verdict}
+          agentId={judge?.id}
+          label="Hear the verdict"
+          className="button button-sm result-listen"
+        />
 
         <div className="winner-line">
           {winner ? (

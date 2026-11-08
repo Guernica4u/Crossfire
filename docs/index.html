@@ -7,12 +7,12 @@
     <title>Crossfire — a room for hard questions</title>
     <meta
       name="description"
-      content="Three AI voices, one table, and a judge at the far end. A local-first debate arena with a shared free-key pool."
+      content="Three AI voices, one table, and a judge at the far end. A live debate arena with a shared free-key pool."
     />
     <meta property="og:title" content="Crossfire — a room for hard questions" />
     <meta
       property="og:description"
-      content="Three AI voices, one table, and a judge at the far end. Run the arena locally."
+      content="Three AI voices, one table, and a judge at the far end. Open the hosted arena."
     />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -26,7 +26,16 @@
   <body>
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Crossfire home">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="23" r="8.5" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="10" cy="32" r="2.7" fill="var(--rust)" />
+            <circle cx="20" cy="35" r="2.7" fill="var(--rust)" />
+            <circle cx="30" cy="32" r="2.7" fill="var(--rust)" />
+            <circle cx="20" cy="5" r="1.8" fill="currentColor" />
+            <path d="M20 8v4.5" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.4 2.2" />
+          </svg>
+        </span>
         <span>
           <span class="brand-word">CROSSFIRE</span>
           <span class="brand-sub">a room for hard questions</span>
@@ -42,20 +51,20 @@
 
     <main id="top">
       <section class="hero">
-        <div class="eyebrow">A local-first AI debate arena</div>
+        <div class="eyebrow">A live AI debate arena</div>
         <h1>A question.<br /><em>Three voices.</em><br />One judge.</h1>
         <p class="hero-copy">
           Put a question on the table. Three free models take committed positions, argue
           in rounds, and answer a judge sitting at the far end. Cut in whenever you want.
-          Keep the transcript on your own machine.
+          Keep every transcript in the shared archive.
         </p>
         <div class="hero-actions">
-          <a class="button button-primary" href="#run">Get the app</a>
+          <a class="button button-primary" href="https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page">Open the live arena</a>
           <a class="button" href="https://github.com/Guernica4u/crossfire-arena">Read the source</a>
         </div>
         <div class="hero-stamps">
           <span>Next.js</span>
-          <span>SQLite</span>
+          <span>Cloudflare D1</span>
           <span>OpenRouter free models</span>
           <span>No paid fallback</span>
         </div>
@@ -150,7 +159,8 @@
         </div>
         <p class="preview-note">
           This preview is illustrative. The actual room streams one voice at a time, saves
-          every turn, and lets you interrupt mid-reply.
+          every turn, and lets you interrupt mid-reply. Turn on <strong>Listen live</strong>
+          or use the speaker beside a turn to hear it with your browser's built-in voice.
         </p>
       </section>
 
@@ -175,7 +185,7 @@
             <article>
               <span>01</span>
               <strong>Owner first</strong>
-              <p>The local key is always tried before a community key.</p>
+              <p>The owner key is always tried before a community key.</p>
             </article>
             <article>
               <span>02</span>
@@ -185,14 +195,14 @@
             <article>
               <span>03</span>
               <strong>Server-side</strong>
-              <p>The pool needs the Node app. GitHub Pages cannot accept keys.</p>
+              <p>The pool runs in the hosted app. This project page is static.</p>
             </article>
           </div>
         </div>
         <div class="pool-callout">
           <strong>Hosting note.</strong> This GitHub Pages site is the front door. The
-          arena, the SQLite archive, the stream, and the public key pool run on a Node
-          server — either your machine or a host you control.
+          arena, the D1 archive, the stream, and the public key pool run in the hosted
+          app.
         </div>
       </section>
 
@@ -222,14 +232,14 @@
 
       <section id="run" class="run-section">
         <div class="run-copy">
-          <div class="eyebrow">Run it</div>
-          <h2>The arena is local.</h2>
+          <div class="eyebrow">Run it yourself</div>
+          <h2>The arena is live.</h2>
           <p>
-            Crossfire needs Node 24 or newer and a free OpenRouter key. The Control Panel
-            finds or saves the key, starts the server, and opens the room.
+            Open the hosted room, or run a copy on your own machine with Node 24 and a
+            free OpenRouter key. The hosted room stores debates in Cloudflare D1.
           </p>
-          <a class="button button-primary" href="https://github.com/Guernica4u/crossfire-arena#setup">
-            Open the setup guide
+          <a class="button button-primary" href="https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page">
+            Open the live arena
           </a>
         </div>
         <pre class="terminal"><code><span class="prompt">$</span> git clone https://github.com/Guernica4u/crossfire-arena.git
@@ -239,11 +249,18 @@
       </section>
 
       <section class="closing">
-        <div class="closing-mark" aria-hidden="true"></div>
+        <svg class="closing-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+          <circle cx="20" cy="23" r="8.5" stroke="currentColor" stroke-width="1.5" />
+          <circle cx="10" cy="32" r="2.7" fill="var(--rust)" />
+          <circle cx="20" cy="35" r="2.7" fill="var(--rust)" />
+          <circle cx="30" cy="32" r="2.7" fill="var(--rust)" />
+          <circle cx="20" cy="5" r="1.8" fill="currentColor" />
+          <path d="M20 8v4.5" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.4 2.2" />
+        </svg>
         <h2>Put a question<br /><em>on the table.</em></h2>
         <div class="closing-actions">
-          <a class="button button-primary" href="https://github.com/Guernica4u/crossfire-arena">View the repository</a>
-          <a class="button" href="https://github.com/Guernica4u/crossfire-arena#setup">Setup</a>
+          <a class="button button-primary" href="https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page">Open the live arena</a>
+          <a class="button" href="https://github.com/Guernica4u/crossfire-arena">View the repository</a>
         </div>
       </section>
     </main>
@@ -251,7 +268,7 @@
     <footer class="site-footer">
       <div>
         <span class="brand-word">CROSSFIRE</span>
-        <span>Built for localhost. Shared on GitHub Pages as a project front door.</span>
+        <span>Live on the web. Backed by Cloudflare D1.</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/Guernica4u/crossfire-arena">GitHub</a>

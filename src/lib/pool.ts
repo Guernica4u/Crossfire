@@ -1,12 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  createHmac,
-  randomBytes,
-} from "node:crypto";
 import {
   countPoolKeys,
   findPoolKeyByFingerprint,
@@ -20,11 +11,11 @@ import {
 
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const MAX_POOL_KEYS = 25;
-const DATA_DIR = path.join(process.cwd(), "data");
-const SECRET_FILE = path.join(DATA_DIR, "pool.secret");
+const encoder = new TextEncoder();
 
 const globalForPool = globalThis as unknown as {
-  crossfirePoolSecret?: Buffer;
+  crossfireAesKey?: Promise<CryptoKey>;
+  crossfireFingerprintKey?: Promise<CryptoKey>;
   crossfireContributionTimes?: number[];
 };
 
@@ -53,57 +44,101 @@ function validKeyShape(key: string): boolean {
   return /^sk-[A-Za-z0-9._-]{16,}$/.test(key) && key.length <= 240;
 }
 
-/**
- * The local secret is generated once and kept beside the database. A hosted
- * deployment should set CROSSFIRE_POOL_SECRET in its server environment.
- */
-function getSecret(): Buffer {
-  if (globalForPool.crossfirePoolSecret) return globalForPool.crossfirePoolSecret;
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
 
+function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function poolSecret(): string {
   const configured = process.env.CROSSFIRE_POOL_SECRET?.trim();
-  if (configured) {
-    globalForPool.crossfirePoolSecret = createHash("sha256").update(configured).digest();
-    return globalForPool.crossfirePoolSecret;
+  if (!configured || configured.length < 32) {
+    throw new PoolError(
+      "The pool encryption secret is not configured on this deployment.",
+      503,
+    );
   }
-
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  let raw = "";
-  try {
-    raw = fs.readFileSync(SECRET_FILE, "utf8").trim();
-  } catch {
-    // Generated below.
-  }
-  if (raw.length < 32) {
-    raw = randomBytes(32).toString("hex");
-    fs.writeFileSync(SECRET_FILE, raw, { encoding: "utf8", mode: 0o600 });
-  }
-  globalForPool.crossfirePoolSecret = createHash("sha256").update(raw).digest();
-  return globalForPool.crossfirePoolSecret;
+  return configured;
 }
 
-function encryptKey(key: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", getSecret(), iv);
-  const encrypted = Buffer.concat([cipher.update(key, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return ["v1", iv.toString("base64url"), tag.toString("base64url"), encrypted.toString("base64url")].join(".");
+function aesKey(): Promise<CryptoKey> {
+  if (!globalForPool.crossfireAesKey) {
+    globalForPool.crossfireAesKey = (async () => {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        encoder.encode(`crossfire:aes:${poolSecret()}`),
+      );
+      return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, [
+        "encrypt",
+        "decrypt",
+      ]);
+    })();
+  }
+  return globalForPool.crossfireAesKey;
 }
 
-function decryptKey(payload: string): string {
-  const [version, ivPart, tagPart, dataPart] = payload.split(".");
-  if (version !== "v1" || !ivPart || !tagPart || !dataPart) {
+function fingerprintKey(): Promise<CryptoKey> {
+  if (!globalForPool.crossfireFingerprintKey) {
+    globalForPool.crossfireFingerprintKey = (async () => {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        encoder.encode(`crossfire:fingerprint:${poolSecret()}`),
+      );
+      return crypto.subtle.importKey("raw", digest, { name: "HMAC", hash: "SHA-256" }, false, [
+        "sign",
+      ]);
+    })();
+  }
+  return globalForPool.crossfireFingerprintKey;
+}
+
+async function encryptKey(key: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(new ArrayBuffer(12)));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    await aesKey(),
+    encoder.encode(key),
+  );
+  return ["v1", encodeBase64Url(iv), encodeBase64Url(new Uint8Array(encrypted))].join(".");
+}
+
+async function decryptKey(payload: string): Promise<string> {
+  const [version, ivPart, dataPart] = payload.split(".");
+  if (version !== "v1" || !ivPart || !dataPart) {
     throw new Error("The stored pool key is unreadable.");
   }
-  const decipher = createDecipheriv("aes-256-gcm", getSecret(), Buffer.from(ivPart, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagPart, "base64url"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(dataPart, "base64url")),
-    decipher.final(),
-  ]).toString("utf8");
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: decodeBase64Url(ivPart) },
+      await aesKey(),
+      decodeBase64Url(dataPart),
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch {
+    throw new Error("The stored pool key is unreadable.");
+  }
 }
 
-function fingerprint(key: string): string {
-  return createHmac("sha256", getSecret()).update(key).digest("hex");
+async function fingerprint(key: string): Promise<string> {
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    await fingerprintKey(),
+    encoder.encode(key),
+  );
+  return encodeBase64Url(new Uint8Array(signature));
 }
 
 function keyHint(key: string): string {
@@ -191,26 +226,26 @@ export async function contributePoolKey(input: {
     throw new PoolError("That does not look like an OpenRouter key.", 400);
   }
 
-  const counts = countPoolKeys();
+  const counts = await countPoolKeys();
   if (counts.total >= MAX_POOL_KEYS) {
     throw new PoolError(`The public pool is full (${MAX_POOL_KEYS} keys).`, 409);
   }
 
-  const hash = fingerprint(key);
-  if (findPoolKeyByFingerprint(hash)) {
+  const hash = await fingerprint(key);
+  if (await findPoolKeyByFingerprint(hash)) {
     throw new PoolError("That key is already in the public pool.", 409);
   }
 
   const info = await inspectKey(key);
-  const stored = insertPoolKey({
+  const stored = await insertPoolKey({
     fingerprint: hash,
     hint: keyHint(key),
     label: info.label,
     contributor: cleanContributor(input.contributor),
-    encryptedKey: encryptKey(key),
+    encryptedKey: await encryptKey(key),
   });
 
-  return { key: stored, pool: getPoolSnapshot() };
+  return { key: stored, pool: await getPoolSnapshot() };
 }
 
 export interface PoolSnapshot {
@@ -220,13 +255,13 @@ export interface PoolSnapshot {
   keys: PublicPoolKey[];
 }
 
-export function getPoolSnapshot(): PoolSnapshot {
-  const counts = countPoolKeys();
+export async function getPoolSnapshot(): Promise<PoolSnapshot> {
+  const [counts, keys] = await Promise.all([countPoolKeys(), listPublicPoolKeys()]);
   return {
     total: counts.total,
     active: counts.active,
     capacity: MAX_POOL_KEYS,
-    keys: listPublicPoolKeys().filter((key) => key.status === "active"),
+    keys: keys.filter((key) => key.status === "active"),
   };
 }
 
@@ -237,7 +272,7 @@ export interface KeyCandidate {
   hint: string;
 }
 
-export function getKeyCandidates(): KeyCandidate[] {
+export async function getKeyCandidates(): Promise<KeyCandidate[]> {
   const candidates: KeyCandidate[] = [];
   const seen = new Set<string>();
   const owner = normalizeKey(process.env.OPENROUTER_API_KEY);
@@ -246,10 +281,10 @@ export function getKeyCandidates(): KeyCandidate[] {
     candidates.push({ id: null, key: owner, source: "owner", hint: keyHint(owner) });
   }
 
-  for (const stored of listStoredPoolKeys()) {
+  for (const stored of await listStoredPoolKeys()) {
     if (stored.status !== "active") continue;
     try {
-      const key = decryptKey(stored.encryptedKey);
+      const key = await decryptKey(stored.encryptedKey);
       if (seen.has(key)) continue;
       seen.add(key);
       candidates.push({
@@ -259,23 +294,23 @@ export function getKeyCandidates(): KeyCandidate[] {
         hint: stored.hint,
       });
     } catch {
-      markPoolKeyStatus(stored.id, "invalid", "The stored key could not be decrypted.");
+      await markPoolKeyStatus(stored.id, "invalid", "The stored key could not be decrypted.");
     }
   }
 
   return candidates;
 }
 
-export function getPoolProbeKey(): KeyCandidate | null {
-  return getKeyCandidates().find((candidate) => candidate.source === "community") ?? null;
+export async function getPoolProbeKey(): Promise<KeyCandidate | null> {
+  return (await getKeyCandidates()).find((candidate) => candidate.source === "community") ?? null;
 }
 
-export function noteCandidateUsed(candidate: KeyCandidate): void {
-  if (candidate.id) markPoolKeyUsed(candidate.id);
+export async function noteCandidateUsed(candidate: KeyCandidate): Promise<void> {
+  if (candidate.id) await markPoolKeyUsed(candidate.id);
 }
 
-export function noteCandidateRejected(candidate: KeyCandidate): void {
+export async function noteCandidateRejected(candidate: KeyCandidate): Promise<void> {
   if (candidate.id) {
-    markPoolKeyStatus(candidate.id, "invalid", "OpenRouter rejected this key.");
+    await markPoolKeyStatus(candidate.id, "invalid", "OpenRouter rejected this key.");
   }
 }

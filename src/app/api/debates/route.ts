@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return Response.json({ debates: listDebates() });
+  return Response.json({ debates: await listDebates() });
 }
 
 export async function POST(request: Request) {
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Topic and three debaters are required." }, { status: 400 });
     }
 
-    const view = createDebate({
+    const view = await createDebate({
       topic: body.topic,
       rounds: Number(body.rounds) || 1,
       agents: body.agents.map((agent) => ({

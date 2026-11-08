@@ -13,9 +13,8 @@ const TOPICS = [
   "Has social media made us worse?",
 ];
 
-export default function HomePage() {
-  const debates = listDebates();
-  const stats = getDebateStats();
+export default async function HomePage() {
+  const [debates, stats] = await Promise.all([listDebates(), getDebateStats()]);
 
   return (
     <div className="page">
