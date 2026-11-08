@@ -3,8 +3,8 @@
 **A room for hard questions.** Three free AI models take committed positions around a table, argue in rounds, and answer a judge at the far end. You can cut in at any time. Every transcript is kept in the shared archive.
 
 - **Live app:** https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page
-- **Project front door:** https://guernica4u.github.io/crossfire-arena/
-- **Source:** https://github.com/Guernica4u/crossfire-arena
+- **Project front door:** https://guernica4u.github.io/Crossfire/
+- **Source:** https://github.com/Guernica4u/Crossfire
 
 Crossfire runs as a Next.js app on Freebuff Sites, with Cloudflare D1 for persistence. It is designed for OpenRouter's free model pool. There is no billing path and no paid fallback.
 
@@ -33,8 +33,8 @@ Requirements:
 - An [OpenRouter](https://openrouter.ai/) free-tier API key
 
 ```bash
-git clone https://github.com/Guernica4u/crossfire-arena.git
-cd crossfire-arena
+git clone https://github.com/Guernica4u/Crossfire.git
+cd Crossfire
 npm install
 cp .env.example .env.local   # Windows: copy .env.example .env.local
 ```
