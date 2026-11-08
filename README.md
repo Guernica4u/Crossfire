@@ -17,7 +17,7 @@ The debate room is a single stage rather than a dashboard:
 - The evaluation rail shows each voice's share of the floor while the debate runs. It becomes the judge's real scorecard when the verdict is recorded.
 - The transcript is a quiet, readable exchange below the stage. Audience cut-ins become part of the transcript.
 - The default theme is warm paper and ink with a rust accent. A dark variant is available from the header.
-- Press **Listen live** to hear each new turn, or use the speaker beside any completed turn. Audio uses the browser's built-in speech voices, so no extra key or service is required.
+- New turns play automatically through the best natural voice your browser offers. Use **Mute** beside any seat (or the judge's bench) to silence that voice until you unmute it; the speaker on a completed turn or the verdict replays it. Audio uses the browser's built-in voices, so no extra key or service is required.
 
 ## Use the hosted app
 

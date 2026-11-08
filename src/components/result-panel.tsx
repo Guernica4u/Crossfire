@@ -37,7 +37,9 @@ export function ResultPanel({
           id="verdict"
           text={result.verdict}
           agentId={judge?.id}
+          voiceSlot={judge?.position ?? 3}
           label="Hear the verdict"
+          mutedLabel="Unmute judge"
           className="button button-sm result-listen"
         />
 

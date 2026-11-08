@@ -3956,6 +3956,16 @@ body::before {
   color: var(--accent);
 }
 
+.speak-button.is-muted {
+  color: var(--danger);
+  opacity: 0.82;
+}
+
+.speak-button.is-muted:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .speak-button-icon {
   display: inline-flex;
   width: 23px;
@@ -3977,6 +3987,101 @@ body::before {
 
 .result-listen {
   margin-top: 13px;
+}
+
+.seat[data-muted="true"] .seat-disc {
+  opacity: 0.46;
+}
+
+.seat[data-muted="true"] .seat-name,
+.seat[data-muted="true"] .seat-meta,
+.seat[data-muted="true"] .seat-model {
+  color: var(--faint);
+}
+
+.seat-mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  color: var(--faint);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 7.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: 150ms ease;
+}
+
+.seat-mute:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+
+.seat-mute[data-muted="true"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
+  background: var(--danger-soft);
+}
+
+.judge-mute {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--faint);
+  background: transparent;
+  transition: 150ms ease;
+}
+
+.judge-mute:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+
+.judge-mute[data-muted="true"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
+  background: var(--danger-soft);
+}
+
+.judge-bench[data-muted="true"] .judge-figure {
+  opacity: 0.35;
+}
+
+.judge-bench[data-muted="true"] .judge-name {
+  color: var(--faint);
+}
+
+.turn-speak[data-muted="true"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.room-speech-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.room-speech-note svg {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 680px) {

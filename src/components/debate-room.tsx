@@ -23,6 +23,7 @@ import type { DebateAgent, DebatePhase, DebateView, Turn } from "@/lib/types";
 import { getModel } from "@/lib/agents";
 import { Avatar, Spinner, StanceBadge, StatusBadge } from "@/components/ui";
 import { ResultPanel } from "@/components/result-panel";
+import { SpeakButton } from "@/components/speak-button";
 import { useSpeech } from "@/lib/speech";
 import { cn, excerpt, initials, phaseLabel, stanceLabel } from "@/lib/utils";
 
@@ -113,14 +114,23 @@ function JudgeBench({
   awake,
   deliberating,
   thought,
+  muted,
+  onToggleMute,
 }: {
   judge?: DebateAgent;
   awake: boolean;
   deliberating: boolean;
   thought: string;
+  muted: boolean;
+  onToggleMute: () => void;
 }) {
   return (
-    <div className="judge-bench" data-awake={awake} data-deliberating={deliberating}>
+    <div
+      className="judge-bench"
+      data-awake={awake}
+      data-deliberating={deliberating}
+      data-muted={muted}
+    >
       <div className="judge-figure">
         <span className="judge-halo" aria-hidden="true" />
         <Avatar name={judge?.name ?? "The Arbiter"} color={judge?.color ?? "var(--accent)"} size="sm" />
@@ -135,6 +145,19 @@ function JudgeBench({
           {deliberating ? "Deliberating" : awake ? "Talking to himself" : "Waiting for the room"}
         </div>
       </div>
+      {judge ? (
+        <button
+          type="button"
+          className="judge-mute"
+          data-muted={muted}
+          aria-label={muted ? `Unmute ${judge.name}` : `Mute ${judge.name}`}
+          aria-pressed={muted}
+          title={muted ? `Unmute ${judge.name}` : `Mute ${judge.name}`}
+          onClick={onToggleMute}
+        >
+          {muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+        </button>
+      ) : null}
       {awake ? (
         <div className="judge-mutter" aria-live="polite">
           <span className="mutter-mark">“</span>
@@ -147,17 +170,7 @@ function JudgeBench({
   );
 }
 
-function TranscriptTurn({
-  turn,
-  agent,
-  speaking,
-  onSpeak,
-}: {
-  turn: Turn;
-  agent?: DebateAgent;
-  speaking: boolean;
-  onSpeak: (turn: Turn, agent?: DebateAgent) => void;
-}) {
+function TranscriptTurn({ turn, agent }: { turn: Turn; agent?: DebateAgent }) {
   if (turn.role === "user") {
     return (
       <article className="room-turn room-turn-user">
@@ -195,21 +208,14 @@ function TranscriptTurn({
           {turn.status === "interrupted" ? <span className="badge">Cut off</span> : null}
           {turn.status === "error" ? <span className="badge badge-danger">Error</span> : null}
           {turn.content.trim() ? (
-            <button
-              type="button"
+            <SpeakButton
+              id={turn.id}
+              text={turn.content}
+              agentId={agent?.id ?? turn.agentId}
+              voiceSlot={agent?.position}
+              label=""
               className="turn-speak"
-              data-active={speaking}
-              aria-label={speaking ? "Stop reading this turn aloud" : "Read this turn aloud"}
-              aria-pressed={speaking}
-              title={
-                speaking
-                  ? "Stop reading aloud"
-                  : "Read this turn with your browser's built-in voice"
-              }
-              onClick={() => onSpeak(turn, agent)}
-            >
-              {speaking ? <VolumeX size={12} /> : <Volume2 size={12} />}
-            </button>
+            />
           ) : null}
         </div>
         <p className="turn-copy">{turn.content || "—"}</p>
@@ -240,8 +246,8 @@ export function DebateRoom({
   const [sendingPoint, setSendingPoint] = useState(false);
   const [provider, setProvider] = useState<ProviderStatus | null>(null);
   const [providerChecked, setProviderChecked] = useState(false);
-  const [listenLive, setListenLive] = useState(false);
-  const { speakingId, speak, stop } = useSpeech();
+  const { autoRead, mutedIds, notice, isMuted, setAutoRead, enqueue, toggleMuted, stop } =
+    useSpeech();
   const abortRef = useRef<AbortController | null>(null);
   const loopPromiseRef = useRef<Promise<void> | null>(null);
   const partialRef = useRef("");
@@ -257,6 +263,7 @@ export function DebateRoom({
           turn.role === "agent" && Boolean(turn.content.trim()) && turn.status !== "error",
       )?.id ?? null,
   );
+  const lastSpokenVerdictRef = useRef<string | null>(initialView.result?.verdict ?? null);
 
   const debaters = useMemo(
     () => view.agents.filter((agent) => agent.role === "debater"),
@@ -383,22 +390,60 @@ export function DebateRoom({
   }, []);
 
   useEffect(() => {
-    if (!listenLive) return;
-    const latest = [...view.turns]
-      .reverse()
-      .find(
-        (turn) =>
-          turn.role === "agent" && Boolean(turn.content.trim()) && turn.status !== "error",
-      );
-    if (!latest || latest.id === lastAutoSpokenRef.current) return;
-    lastAutoSpokenRef.current = latest.id;
-    const agent = view.agents.find((item) => item.id === latest.agentId);
-    speak({
-      id: latest.id,
-      text: latest.content,
-      agentId: agent?.id ?? latest.agentId,
+    if (!autoRead) return;
+
+    const completed = view.turns.filter(
+      (turn) =>
+        turn.role === "agent" && Boolean(turn.content.trim()) && turn.status !== "error",
+    );
+    if (completed.length === 0) return;
+
+    const lastId = lastAutoSpokenRef.current;
+    let pending: Turn[];
+
+    if (!lastId) {
+      // Turning auto-read on mid-debate starts with the most recent turn; it
+      // does not read the whole archive from the beginning.
+      pending = completed.slice(-1);
+    } else {
+      const lastIndex = completed.findIndex((turn) => turn.id === lastId);
+      if (lastIndex === -1) {
+        lastAutoSpokenRef.current = completed[completed.length - 1].id;
+        return;
+      }
+      pending = completed.slice(lastIndex + 1);
+    }
+
+    if (pending.length === 0) return;
+    lastAutoSpokenRef.current = pending[pending.length - 1].id;
+
+    for (const turn of pending) {
+      if (turn.agentId && mutedIds.includes(turn.agentId)) continue;
+      const agent = view.agents.find((item) => item.id === turn.agentId);
+      enqueue({
+        id: turn.id,
+        text: turn.content,
+        agentId: turn.agentId,
+        voiceSlot: agent?.position,
+      });
+    }
+  }, [autoRead, enqueue, mutedIds, view.agents, view.turns]);
+
+  useEffect(() => {
+    if (!autoRead) return;
+    const verdict = view.result?.verdict;
+    if (!verdict || verdict === lastSpokenVerdictRef.current) return;
+
+    lastSpokenVerdictRef.current = verdict;
+    if (!judge || mutedIds.includes(judge.id)) return;
+
+    enqueue({
+      id: `verdict:${view.debate.id}`,
+      text: verdict,
+      agentId: judge.id,
+      voiceSlot: judge.position,
     });
-  }, [listenLive, speak, view.agents, view.turns]);
+  }, [autoRead, enqueue, judge, mutedIds, view.debate.id, view.result?.verdict]);
 
   useEffect(() => {
     if (initialTurnsRef.current === null) {
@@ -708,24 +753,6 @@ export function DebateRoom({
     }
   }
 
-  function toggleLiveListening() {
-    if (listenLive) {
-      setListenLive(false);
-      stop();
-      return;
-    }
-    lastAutoSpokenRef.current = null;
-    setListenLive(true);
-  }
-
-  function speakTurn(turn: Turn, agent?: DebateAgent) {
-    if (speakingId === turn.id) {
-      stop();
-      return;
-    }
-    speak({ id: turn.id, text: turn.content, agentId: agent?.id ?? turn.agentId });
-  }
-
   return (
     <div className="room-page">
       <div className="room-top">
@@ -738,13 +765,16 @@ export function DebateRoom({
           <button
             type="button"
             className="button button-sm listen-toggle"
-            data-active={listenLive}
-            aria-pressed={listenLive}
-            title="Read new turns aloud with your browser's built-in speech voices"
-            onClick={toggleLiveListening}
+            data-active={autoRead}
+            aria-pressed={autoRead}
+            title="New turns play automatically. Mute individual voices at the table."
+            onClick={() => {
+              if (!autoRead) lastAutoSpokenRef.current = null;
+              setAutoRead(!autoRead);
+            }}
           >
-            {listenLive ? <Volume2 size={13} /> : <VolumeX size={13} />}
-            {listenLive ? "Listening" : "Listen live"}
+            {autoRead ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            {autoRead ? "Auto-read on" : "Auto-read off"}
           </button>
           {!isComplete ? (
             <button
@@ -797,6 +827,12 @@ export function DebateRoom({
             {statusMessage}
           </div>
         ) : null}
+        {notice ? (
+          <div className="room-live-line room-speech-note" role="status">
+            <VolumeX size={12} />
+            {notice}
+          </div>
+        ) : null}
       </header>
 
       <RoomArc view={view} />
@@ -828,6 +864,10 @@ export function DebateRoom({
           awake={judgeAwake}
           deliberating={judging || view.debate.phase === "judging"}
           thought={judgeThought}
+          muted={judge ? isMuted(judge.id) : false}
+          onToggleMute={() => {
+            if (judge) toggleMuted(judge.id);
+          }}
         />
 
         <div className="room-table">
@@ -839,12 +879,14 @@ export function DebateRoom({
             {debaters.map((agent) => {
               const active = liveTurn?.agentId === agent.id;
               const turns = turnCountFor(agent.id);
+              const muted = isMuted(agent.id);
               return (
                 <div
                   className="seat"
                   key={agent.id}
                   data-active={active}
                   data-spoken={turns > 0}
+                  data-muted={muted}
                   style={{ "--agent-color": agent.color } as CSSProperties}
                 >
                   <div className="seat-disc">
@@ -867,6 +909,18 @@ export function DebateRoom({
                     {stanceLabel(agent.stance)} · {turns} turn{turns === 1 ? "" : "s"}
                   </div>
                   <div className="seat-model">{getModel(agent.model).label}</div>
+                  <button
+                    type="button"
+                    className="seat-mute"
+                    data-muted={muted}
+                    aria-label={muted ? `Unmute ${agent.name}` : `Mute ${agent.name}`}
+                    aria-pressed={muted}
+                    title={muted ? `Unmute ${agent.name}` : `Mute ${agent.name}`}
+                    onClick={() => toggleMuted(agent.id)}
+                  >
+                    {muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
+                    <span>{muted ? "Unmute" : "Mute"}</span>
+                  </button>
                 </div>
               );
             })}
@@ -939,8 +993,6 @@ export function DebateRoom({
           <TranscriptTurn
             key={turn.id}
             turn={turn}
-            speaking={speakingId === turn.id}
-            onSpeak={speakTurn}
             agent={
               turn.agentId
                 ? view.agents.find((agent) => agent.id === turn.agentId)
