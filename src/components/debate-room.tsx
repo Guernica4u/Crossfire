@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Check,
+  Copy,
   Gavel,
   KeyRound,
   Pause,
@@ -46,6 +49,14 @@ type ProviderStatus = {
   usage?: number;
   freeRequests?: { used: number; limit: number; remaining: number };
   pool?: { total: number; active: number; capacity: number };
+  capacity?: {
+    requestsRemaining: number | null;
+    requestsPerDebate: number;
+    debatesRemaining: number | null;
+    poolActive: number;
+    canStart: boolean;
+    message?: string;
+  };
   error?: string;
 };
 
@@ -246,8 +257,20 @@ export function DebateRoom({
   const [sendingPoint, setSendingPoint] = useState(false);
   const [provider, setProvider] = useState<ProviderStatus | null>(null);
   const [providerChecked, setProviderChecked] = useState(false);
-  const { autoRead, mutedIds, notice, isMuted, setAutoRead, enqueue, toggleMuted, stop } =
-    useSpeech();
+  const [copied, setCopied] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const router = useRouter();
+  const {
+    autoRead,
+    mutedIds,
+    notice,
+    isMuted,
+    setAutoRead,
+    initializeAutoRead,
+    enqueue,
+    toggleMuted,
+    stop,
+  } = useSpeech();
   const abortRef = useRef<AbortController | null>(null);
   const loopPromiseRef = useRef<Promise<void> | null>(null);
   const partialRef = useRef("");
@@ -274,7 +297,23 @@ export function DebateRoom({
     [view.agents],
   );
   const isComplete = view.debate.status === "complete" && Boolean(view.result);
+  const isErrored = view.debate.status === "error";
   const isPaused = paused || view.debate.status === "paused";
+  const verdictPending =
+    view.debate.phase === "judging" && !view.result && !judging;
+  const lastErrorTurn = useMemo(
+    () =>
+      [...view.turns]
+        .reverse()
+        .find((turn) => turn.status === "error" || Boolean(turn.error)),
+    [view.turns],
+  );
+  const errorText =
+    error ??
+    (isErrored
+      ? lastErrorTurn?.error ??
+        "The debate stopped before the next voice could finish. Retry the turn from here."
+      : null);
   const currentAgent = liveTurn
     ? debaters.find((agent) => agent.id === liveTurn.agentId)
     : undefined;
@@ -352,7 +391,8 @@ export function DebateRoom({
 
   const quota = provider?.freeRequests;
   const phaseNow = judging ? "Judgment" : roundLabel(view.debate.phase, view.debate.round);
-  const canSend = Boolean(composer.trim()) && !sendingPoint && !isComplete && !judging;
+  const canSend =
+    Boolean(composer.trim()) && !sendingPoint && !isComplete && !judging && !isErrored;
 
   function applyView(next: DebateView) {
     viewRef.current = next;
@@ -388,6 +428,10 @@ export function DebateRoom({
   useEffect(() => {
     void refreshProvider();
   }, []);
+
+  useEffect(() => {
+    initializeAutoRead(autoStart);
+  }, [autoStart, initializeAutoRead]);
 
   useEffect(() => {
     if (!autoRead) return;
@@ -572,6 +616,15 @@ export function DebateRoom({
             });
           } else if (eventName === "status") {
             setStatusMessage(String(data.message ?? ""));
+          } else if (eventName === "replace") {
+            const text = String(data.text ?? "");
+            partialRef.current = text;
+            setLiveTurn((current) => {
+              if (!current) return current;
+              const next = { ...current, content: text };
+              liveTurnRef.current = next;
+              return next;
+            });
           } else if (eventName === "done") {
             const nextView = data.view as DebateView;
             const needsJudge = Boolean(data.needsJudge);
@@ -619,6 +672,75 @@ export function DebateRoom({
       void refreshProvider();
     } finally {
       setJudging(false);
+    }
+  }
+
+  async function retryJudge() {
+    setError(null);
+    try {
+      await runJudge();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The judge could not produce a verdict.");
+      await refreshView();
+    }
+  }
+
+  async function copyTranscript() {
+    const current = viewRef.current;
+    const lines = current.turns.map((turn) => {
+      const agent = current.agents.find((item) => item.id === turn.agentId);
+      const name = turn.role === "user" ? "You" : agent?.name ?? "Unknown speaker";
+      return `${name}:\n${turn.content}`;
+    });
+    const verdict = current.result
+      ? `\n\nVERDICT\n${current.result.verdict}\n\nCONSENSUS\n${current.result.consensus}`
+      : "";
+    const text = `Crossfire — ${current.debate.topic}\n\n${lines.join("\n\n")}${verdict}`;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("The transcript could not be copied in this browser.");
+    }
+  }
+
+  async function restartDebate() {
+    setError(null);
+    setRestarting(true);
+    try {
+      const response = await fetch("/api/debates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: viewRef.current.debate.topic,
+          rounds: viewRef.current.debate.rounds,
+          judgeModel: judge?.model,
+          agents: debaters.map((agent) => ({
+            presetKey: agent.presetKey ?? "",
+            model: agent.model,
+            stance: agent.stance,
+          })),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Could not start another debate.");
+      router.push(`/debate/${payload.view.debate.id}?fresh=1`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not start another debate.");
+      setRestarting(false);
     }
   }
 
@@ -762,6 +884,18 @@ export function DebateRoom({
         </Link>
         <div className="room-actions">
           <StatusBadge status={view.debate.status} />
+          {view.turns.length > 0 ? (
+            <button
+              type="button"
+              className="button button-sm"
+              onClick={() => void copyTranscript()}
+              title="Copy the transcript and verdict"
+              aria-label="Copy transcript"
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="button button-sm listen-toggle"
@@ -777,15 +911,37 @@ export function DebateRoom({
             {autoRead ? "Auto-read on" : "Auto-read off"}
           </button>
           {!isComplete ? (
-            <button
-              type="button"
-              className="button button-sm"
-              onClick={() => (isPaused ? void resumeDebate() : void pauseDebate())}
-              disabled={judging}
-            >
-              {isPaused ? <Play size={13} /> : <Pause size={13} />}
-              {isPaused ? "Resume" : "Pause"}
-            </button>
+            isErrored ? (
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => void resumeDebate()}
+                disabled={judging}
+              >
+                <RotateCcw size={13} />
+                Retry turn
+              </button>
+            ) : verdictPending && isPaused ? (
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => void retryJudge()}
+                disabled={judging}
+              >
+                <Gavel size={13} />
+                Retry verdict
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => (isPaused ? void resumeDebate() : void pauseDebate())}
+                disabled={judging}
+              >
+                {isPaused ? <Play size={13} /> : <Pause size={13} />}
+                {isPaused ? "Resume" : "Pause"}
+              </button>
+            )
           ) : (
             <Link href="/new" className="button button-sm">
               <Swords size={13} />
@@ -817,7 +973,15 @@ export function DebateRoom({
           {quota ? (
             <>
               <span>·</span>
-              <span>{quota.remaining} free left</span>
+              <span>
+                {quota.remaining} free left
+                {provider?.capacity?.debatesRemaining !== null &&
+                provider?.capacity?.debatesRemaining !== undefined
+                  ? ` · ~${provider.capacity.debatesRemaining} debate${
+                      provider.capacity.debatesRemaining === 1 ? "" : "s"
+                    }`
+                  : ""}
+              </span>
             </>
           ) : null}
         </div>
@@ -837,21 +1001,35 @@ export function DebateRoom({
 
       <RoomArc view={view} />
 
-      {error ? (
-        <div className="error-banner">
+      {errorText ? (
+        <div className="error-banner" role="alert">
           <AlertTriangle size={15} style={{ flex: "0 0 auto", marginTop: 1 }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 750, marginBottom: 2 }}>The room hit a snag.</div>
-            <div>{error}</div>
+            <div style={{ fontWeight: 750, marginBottom: 2 }}>
+              {isErrored
+                ? "This debate stopped."
+                : verdictPending
+                  ? "The verdict did not land."
+                  : "The room hit a snag."}
+            </div>
+            <div>{errorText}</div>
+            {isErrored ? (
+              <div style={{ marginTop: 3, opacity: 0.8 }}>
+                The transcript is saved. Retry picks up with the same speaker.
+              </div>
+            ) : null}
             {!isComplete ? (
               <button
                 type="button"
                 className="button button-sm"
                 style={{ marginTop: 9 }}
-                onClick={() => void resumeDebate()}
+                onClick={() =>
+                  verdictPending ? void retryJudge() : void resumeDebate()
+                }
+                disabled={judging}
               >
-                <RotateCcw size={12} />
-                Retry
+                {verdictPending ? <Gavel size={12} /> : <RotateCcw size={12} />}
+                {verdictPending ? "Retry verdict" : isErrored ? "Retry this turn" : "Resume"}
               </button>
             ) : null}
           </div>
@@ -873,7 +1051,19 @@ export function DebateRoom({
         <div className="room-table">
           <div className="table-caption">
             <span className="eyebrow">The table</span>
-            <span>{isPaused ? "Paused" : liveTurn ? "Voice active" : isComplete ? "Verdict recorded" : "Floor open"}</span>
+            <span>
+              {isErrored
+                ? "Stopped"
+                : verdictPending
+                  ? "Verdict pending"
+                  : isPaused
+                    ? "Paused"
+                    : liveTurn
+                      ? "Voice active"
+                      : isComplete
+                        ? "Verdict recorded"
+                        : "Floor open"}
+            </span>
           </div>
           <div className="seat-grid">
             {debaters.map((agent) => {
@@ -982,9 +1172,13 @@ export function DebateRoom({
         {view.turns.length === 0 && !liveTurn ? (
           <div className="transcript-empty">
             <Swords size={20} />
-            <div>The floor is open.</div>
+            <div>{isErrored ? "The room stopped before the first voice." : "The floor is open."}</div>
             <div className="transcript-empty-sub">
-              {isPaused ? "Resume when you are ready for the first voice." : "The first speaker is taking the floor."}
+              {isErrored
+                ? "Retry the turn from the banner above."
+                : isPaused
+                  ? "Resume when you are ready for the first voice."
+                  : "The first speaker is taking the floor."}
             </div>
           </div>
         ) : null}
@@ -1066,11 +1260,15 @@ export function DebateRoom({
             <span>
               {judging
                 ? "Judge deliberating"
-                : liveTurn
-                  ? "Cutting in stops the current reply"
-                  : isPaused
-                    ? "Paused"
-                    : "Add a point at any time"}
+                : isErrored
+                  ? "Debate stopped"
+                  : verdictPending
+                    ? "Retry the verdict to finish"
+                    : liveTurn
+                      ? "Cutting in stops the current reply"
+                      : isPaused
+                        ? "Paused"
+                        : "Add a point at any time"}
             </span>
           </div>
           <div className="composer-inner">
@@ -1081,9 +1279,11 @@ export function DebateRoom({
               placeholder={
                 judging
                   ? "The judge is deliberating…"
-                  : "Cut in with a point, question, or objection…"
+                  : isErrored
+                    ? "Retry the debate to continue…"
+                    : "Cut in with a point, question, or objection…"
               }
-              disabled={judging || sendingPoint}
+              disabled={judging || sendingPoint || isErrored}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -1108,10 +1308,21 @@ export function DebateRoom({
       ) : (
         <div className="room-after">
           <div>Want a different question, roster, or judge?</div>
-          <Link href="/new" className="button button-sm">
-            Start another
-            <ArrowRight size={12} />
-          </Link>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              className="button button-sm"
+              onClick={() => void restartDebate()}
+              disabled={restarting}
+            >
+              {restarting ? <Spinner size={12} /> : <RotateCcw size={12} />}
+              Run it again
+            </button>
+            <Link href="/new" className="button button-sm">
+              Start another
+              <ArrowRight size={12} />
+            </Link>
+          </div>
         </div>
       )}
 

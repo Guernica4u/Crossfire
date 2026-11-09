@@ -118,7 +118,7 @@ export function buildJudgePrompt(input: {
   const roster = debaters
     .map(
       (agent) =>
-        `- id: "${agent.id}" | ${agent.name} | assigned position: ${stanceLabel(agent.stance)} | model: ${agent.model}`,
+        `- id: "${agent.id}" | ${agent.name} | assigned position: ${stanceLabel(agent.stance)}`,
     )
     .join("\n");
 

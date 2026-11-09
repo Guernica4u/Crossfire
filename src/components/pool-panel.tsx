@@ -247,16 +247,17 @@ export function PoolPanel({ initialPool }: { initialPool: Pool }) {
         <div className="pool-note-grid">
           <div>
             <strong>Owner first.</strong>
-            <span>The local key is always tried before community keys.</span>
+            <span>The owner key is always tried before community keys.</span>
           </div>
           <div>
             <strong>Free models only.</strong>
             <span>Paid keys are rejected at contribution; no paid fallback is configured.</span>
           </div>
           <div>
-            <strong>Not a Pages feature.</strong>
+            <strong>Hosted on Cloudflare.</strong>
             <span>
-              GitHub Pages is static. The pool needs the Node app running on a server.
+              The pool is served by the Worker and stored in D1. GitHub Pages is only the
+              static project front door.
             </span>
           </div>
         </div>

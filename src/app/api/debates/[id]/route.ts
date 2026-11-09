@@ -1,4 +1,5 @@
 import { getDebateView, updateDebateStatus } from "@/lib/db";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  const limit = await enforceRateLimit(request, "debate-status", 120, 3600);
+  if (!limit.allowed) return rateLimitResponse(limit);
+
   const { id } = await context.params;
   try {
     const body = (await request.json()) as { status?: string };

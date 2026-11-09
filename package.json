@@ -10,7 +10,8 @@
     "serve": "node scripts/launch.mjs",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run"
   },
   "dependencies": {
     "lucide-react": "^1.70.0",
@@ -27,6 +28,7 @@
     "postcss": "^8.5.32",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
     "wrangler": "4.148.0"
   }
 }

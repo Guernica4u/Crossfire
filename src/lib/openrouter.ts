@@ -1,7 +1,23 @@
 import { FALLBACK_MODELS } from "@/lib/agents";
+import { sanitizeErrorText } from "@/lib/utils";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const KEY_URL = "https://openrouter.ai/api/v1/key";
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+  process.env.SITE_URL?.trim() ||
+  "https://site-2a4337a8b0494c409d081c6612ae611d.freebuff.page";
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Jittered delay for retrying an upstream provider. */
+export function retryDelayMs(attempt: number, retryAfterMs?: number | null): number {
+  if (retryAfterMs && retryAfterMs > 0) return Math.min(4_000, retryAfterMs);
+  const base = Math.min(2_000, 300 * 2 ** Math.max(0, attempt));
+  return base + Math.floor(Math.random() * 250);
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -24,14 +40,17 @@ export interface OpenRouterKeyStatus {
 export class OpenRouterError extends Error {
   status: number;
   details: string;
+  retryAfterMs: number | null;
 
-  constructor(message: string, status = 500, details = "") {
+  constructor(message: string, status = 500, details = "", retryAfterMs: number | null = null) {
     super(message);
     this.name = "OpenRouterError";
     this.status = status;
     this.details = details;
+    this.retryAfterMs = retryAfterMs;
   }
 }
+
 
 function getKey(): string {
   const key = process.env.OPENROUTER_API_KEY?.trim();
@@ -52,7 +71,7 @@ function headers(apiKey: string): Record<string, string> {
   return {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
-    "HTTP-Referer": "http://localhost:3000",
+    "HTTP-Referer": SITE_URL,
     "X-Title": "Crossfire Debate",
   };
 }
@@ -73,7 +92,7 @@ function contentToText(content: unknown): string {
   return "";
 }
 
-function parseErrorBody(raw: string, status: number): OpenRouterError {
+function parseErrorBody(raw: string, status: number, retryAfterMs: number | null = null): OpenRouterError {
   let message = "The model provider returned an error.";
   try {
     const parsed = JSON.parse(raw);
@@ -85,8 +104,18 @@ function parseErrorBody(raw: string, status: number): OpenRouterError {
   } catch {
     if (raw) message = raw.slice(0, 280);
   }
-  return new OpenRouterError(message, status, raw.slice(0, 1000));
+  return new OpenRouterError(sanitizeErrorText(message), status, raw.slice(0, 1000), retryAfterMs);
 }
+
+function retryAfterFrom(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(header);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
 
 export async function checkKeyStatus(): Promise<OpenRouterKeyStatus> {
   if (!getOwnerKey()) {
@@ -103,12 +132,22 @@ export async function checkKeyStatusForKey(apiKey: string): Promise<OpenRouterKe
     });
     const body = await response.json();
     if (!response.ok) {
-      return { configured: false, error: body?.error?.message ?? "Could not verify the key." };
+      return {
+        configured: false,
+        error: sanitizeErrorText(body?.error?.message ?? "Could not verify the key."),
+      };
     }
     const data = body?.data ?? {};
+    // Some keys use a masked version of the key as their label. Keep the
+    // provider status endpoint from echoing even a partial key to clients.
+    const rawLabel = typeof data.label === "string" ? data.label.trim() : "";
+    const label =
+      rawLabel && !/^sk-[A-Za-z0-9._-]+$/i.test(rawLabel)
+        ? sanitizeErrorText(rawLabel, 60)
+        : undefined;
     return {
       configured: true,
-      label: data.label,
+      label,
       isFreeTier: data.is_free_tier,
       usage: data.usage,
       freeRequests: data.free_model_daily_requests,
@@ -116,7 +155,9 @@ export async function checkKeyStatusForKey(apiKey: string): Promise<OpenRouterKe
   } catch (error) {
     return {
       configured: false,
-      error: error instanceof Error ? error.message : "Could not reach OpenRouter.",
+      error: sanitizeErrorText(
+        error instanceof Error ? error.message : "Could not reach OpenRouter.",
+      ),
     };
   }
 }
@@ -128,6 +169,7 @@ export interface StreamOptions {
   temperature?: number;
   signal?: AbortSignal;
   apiKey?: string;
+  onFinish?: (reason: string) => void;
 }
 
 export async function* streamChat(options: StreamOptions): AsyncGenerator<string, void, unknown> {
@@ -148,7 +190,7 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
 
   if (!response.ok) {
     const raw = await response.text();
-    throw parseErrorBody(raw, response.status);
+    throw parseErrorBody(raw, response.status, retryAfterFrom(response));
   }
   if (!response.body) {
     throw new OpenRouterError("The provider returned an empty stream.", 502);
@@ -183,13 +225,17 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
         };
         if (payload.error) {
           throw new OpenRouterError(
-            payload.error.message ?? "The provider returned an error mid-stream.",
+            sanitizeErrorText(payload.error.message ?? "The provider returned an error mid-stream."),
             payload.error.code ?? 502,
           );
         }
-        const delta = payload.choices?.[0]?.delta;
+        const choice = payload.choices?.[0];
+        const delta = choice?.delta;
         const text = contentToText(delta?.content);
         if (text) yield text;
+        if (choice?.finish_reason && options.onFinish) {
+          options.onFinish(String(choice.finish_reason));
+        }
       }
     }
   } finally {
@@ -222,7 +268,7 @@ export async function completeChat(options: {
 
   const raw = await response.text();
   if (!response.ok) {
-    throw parseErrorBody(raw, response.status);
+    throw parseErrorBody(raw, response.status, retryAfterFrom(response));
   }
   let body: unknown;
   try {
@@ -239,10 +285,18 @@ export async function completeChat(options: {
   return content.trim();
 }
 
-export function fallbackChain(primary: string): string[] {
+export function fallbackChain(primary: string, options?: { avoid?: string[] }): string[] {
+  const avoid = new Set(options?.avoid ?? []);
   const seen = new Set<string>();
   const chain: string[] = [];
-  for (const model of [primary, ...FALLBACK_MODELS]) {
+  const rest = [primary, ...FALLBACK_MODELS];
+  // Keep the room diverse: try free models nobody else in the debate is using
+  // before collapsing two speakers onto the same model.
+  const ordered = [
+    ...rest.filter((model) => model === primary || !avoid.has(model)),
+    ...rest.filter((model) => model !== primary && avoid.has(model)),
+  ];
+  for (const model of ordered) {
     if (!seen.has(model)) {
       seen.add(model);
       chain.push(model);
@@ -251,9 +305,23 @@ export function fallbackChain(primary: string): string[] {
   return chain;
 }
 
+export type OpenRouterErrorKind = "auth" | "quota" | "rate-limit" | "server" | "other";
+
+export function errorKind(error: unknown): OpenRouterErrorKind {
+  if (!(error instanceof OpenRouterError)) return "other";
+  if (error.status === 401 || error.status === 403) return "auth";
+  if (error.status === 402) return "quota";
+  if (error.status === 429) return "rate-limit";
+  if (error.status >= 500 || error.status === 408) return "server";
+  return "other";
+}
+
+export function isTransient(error: unknown): boolean {
+  const kind = errorKind(error);
+  return kind === "rate-limit" || kind === "server" || kind === "quota";
+}
+
 export function isRetryable(error: unknown): boolean {
-  return (
-    error instanceof OpenRouterError &&
-    (error.status === 401 || error.status === 402 || error.status === 403 || error.status === 429 || error.status >= 500)
-  );
+  const kind = errorKind(error);
+  return kind === "auth" || kind === "quota" || kind === "rate-limit" || kind === "server";
 }

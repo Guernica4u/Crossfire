@@ -34,7 +34,7 @@ const STORAGE_KEY = "crossfire:speech:v1";
 const DEFAULT_STATE: SpeechState = {
   activeId: null,
   activeAgentId: null,
-  autoRead: true,
+  autoRead: false,
   mutedIds: [],
   notice: null,
 };
@@ -60,6 +60,7 @@ let currentJob: SpeechJob | null = null;
 let queuedJobs: SpeechJob[] = [];
 let session = 0;
 let hydrated = false;
+let autoReadPreferenceSet = false;
 let voiceSignature = "";
 const assignedVoices = new Map<number, SpeechSynthesisVoice>();
 
@@ -104,7 +105,8 @@ function hydrate(): void {
           ),
         ).slice(0, 32)
       : [];
-    const autoRead = typeof parsed.autoRead === "boolean" ? parsed.autoRead : true;
+    const autoRead = typeof parsed.autoRead === "boolean" ? parsed.autoRead : false;
+    autoReadPreferenceSet = typeof parsed.autoRead === "boolean";
     update({ autoRead, mutedIds });
   } catch {
     // Storage can be unavailable in private or embedded contexts.
@@ -456,9 +458,20 @@ export function toggleMuted(agentId: string | null | undefined): void {
 
 export function setAutoRead(enabled: boolean): void {
   if (state.autoRead === enabled) return;
+  autoReadPreferenceSet = true;
   update({ autoRead: enabled });
   persist();
   if (!enabled) stopSpeech();
+}
+
+/**
+ * Applies a session default only when the visitor has never chosen an
+ * auto-read preference. Live debates default on; archived debates default off.
+ */
+export function initializeAutoRead(enabled: boolean): void {
+  hydrate();
+  if (autoReadPreferenceSet) return;
+  if (state.autoRead !== enabled) update({ autoRead: enabled });
 }
 
 export function useSpeech() {
@@ -477,5 +490,6 @@ export function useSpeech() {
     stop: stopSpeech,
     toggleMuted,
     setAutoRead,
+    initializeAutoRead,
   };
 }

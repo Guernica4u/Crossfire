@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Plus, Scale, Sparkles, Swords } from "lucide-react";
+import { ArrowUpRight, Plus, RotateCcw, Scale, Sparkles, Swords } from "lucide-react";
 import { getDebateStats, listDebates } from "@/lib/db";
 import { Avatar, EmptyState, StatusBadge } from "@/components/ui";
 import { excerpt, formatDate, phaseLabel } from "@/lib/utils";
@@ -15,6 +15,8 @@ const TOPICS = [
 
 export default async function HomePage() {
   const [debates, stats] = await Promise.all([listDebates(), getDebateStats()]);
+  const failed = debates.filter((debate) => debate.status === "error");
+  const healthy = debates.filter((debate) => debate.status !== "error");
 
   return (
     <div className="page">
@@ -56,18 +58,71 @@ export default async function HomePage() {
           <div className="stat-label">Total debates</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{stats.completed}</div>
-          <div className="stat-label">Verdicts delivered</div>
+          <div className="stat-value">{stats.completed === 0 ? "—" : stats.completed}</div>
+          <div className="stat-label">
+            {stats.completed === 0 ? "First verdict pending" : "Verdicts delivered"}
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-value">{stats.live}</div>
           <div className="stat-label">Live or paused</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{stats.debaters}</div>
-          <div className="stat-label">Debater seats filled</div>
+          <div className="stat-value">{stats.errors}</div>
+          <div className="stat-label">Need a retry</div>
         </div>
       </section>
+
+      {failed.length > 0 ? (
+        <>
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Needs attention</div>
+              <h2 className="section-title">Stopped debates</h2>
+            </div>
+            <span className="badge badge-danger">
+              {failed.length} stopped
+            </span>
+          </div>
+          <div className="history-list">
+            {failed.map((debate) => (
+              <Link
+                key={debate.id}
+                href={`/debate/${debate.id}`}
+                className="history-card"
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div className="history-meta">
+                    <StatusBadge status={debate.status} />
+                    <span>{formatDate(debate.createdAt)}</span>
+                    <span>·</span>
+                    <span>{phaseLabel(debate.phase)}</span>
+                  </div>
+                  <div className="history-topic">{debate.topic}</div>
+                  <div
+                    style={{
+                      maxWidth: 650,
+                      color: "var(--muted)",
+                      fontSize: 11,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    The room stopped before the next voice could finish. The transcript is
+                    kept; retry from the last speaker.
+                  </div>
+                </div>
+                <div className="history-side">
+                  <div className="eyebrow">Recovery</div>
+                  <div className="history-winner">
+                    Retry this debate
+                    <RotateCcw size={14} />
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       <div className="section-head">
         <div>
@@ -80,11 +135,15 @@ export default async function HomePage() {
         </Link>
       </div>
 
-      {debates.length === 0 ? (
+      {healthy.length === 0 ? (
         <EmptyState
           icon={<Swords size={20} />}
-          title="No debates yet"
-          copy="Pick a question, put three models in the room, and let them fight it out. Your transcript and verdict will live here."
+          title={failed.length > 0 ? "No healthy debates yet" : "No debates yet"}
+          copy={
+            failed.length > 0
+              ? "The stopped debates above kept their transcripts. Retry one, or set a fresh table."
+              : "Pick a question, put three models in the room, and let them fight it out. Your transcript and verdict will live here."
+          }
           action={
             <Link href="/new" className="button button-primary">
               <Plus size={15} />
@@ -94,7 +153,7 @@ export default async function HomePage() {
         />
       ) : (
         <div className="history-list">
-          {debates.map((debate) => {
+          {healthy.map((debate) => {
             const isComplete = debate.status === "complete";
             return (
               <Link

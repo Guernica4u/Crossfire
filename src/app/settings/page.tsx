@@ -21,6 +21,15 @@ type ProviderStatus = {
   isFreeTier?: boolean;
   usage?: number;
   freeRequests?: { used: number; limit: number; remaining: number };
+  pool?: { total: number; active: number; capacity: number };
+  capacity?: {
+    requestsRemaining: number | null;
+    requestsPerDebate: number;
+    debatesRemaining: number | null;
+    poolActive: number;
+    canStart: boolean;
+    message?: string;
+  };
   error?: string;
 };
 
@@ -54,7 +63,7 @@ export default function SettingsPage() {
           <div className="eyebrow">Settings</div>
           <h1 className="page-title">The engine room.</h1>
           <p className="page-sub">
-            One free provider, one local database, no billing path. This page shows what is
+            One free provider, one hosted database, no billing path. This page shows what is
             configured and what the free pool has left.
           </p>
         </div>
@@ -115,7 +124,26 @@ export default function SettingsPage() {
               <span>Requests used today</span>
               <strong>{quota ? quota.used : "—"}</strong>
             </div>
+            <div className="kv">
+              <span>Estimated debates left</span>
+              <strong>
+                {status?.capacity?.debatesRemaining === null ||
+                status?.capacity?.debatesRemaining === undefined
+                  ? "—"
+                  : status.capacity.debatesRemaining}
+              </strong>
+            </div>
+            <div className="kv">
+              <span>Calls per quick debate</span>
+              <strong>{status?.capacity?.requestsPerDebate ?? 10}</strong>
+            </div>
           </div>
+
+          {status?.capacity?.message ? (
+            <div className="caveat" style={{ marginTop: 10 }}>
+              {status.capacity.message}
+            </div>
+          ) : null}
 
           <div className="quota-bar" style={{ marginTop: 12 }}>
             <div
@@ -145,7 +173,7 @@ export default function SettingsPage() {
           </div>
           <div style={{ marginTop: 13, fontSize: 18, fontWeight: 800 }}>Cloudflare D1</div>
           <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 11, lineHeight: 1.6 }}>
-            Debate transcripts, verdicts, positions, and pool records live in the
+            Debate transcripts, verdicts, positions, and pool records live in the{" "}
             <code
               style={{
                 display: "inline-block",
@@ -158,7 +186,7 @@ export default function SettingsPage() {
               }}
             >
               D1 · DB
-            </code>
+            </code>{" "}
             database for this deployment. There is no Crossfire account.
           </div>
           <div style={{ marginTop: 16 }}>

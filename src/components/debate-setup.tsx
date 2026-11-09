@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -36,6 +36,21 @@ const EXAMPLES = [
   "Has social media made us worse?",
 ];
 
+type ProviderStatus = {
+  configured: boolean;
+  freeRequests?: { used: number; limit: number; remaining: number };
+  pool?: { total: number; active: number; capacity: number };
+  capacity?: {
+    requestsRemaining: number | null;
+    requestsPerDebate: number;
+    debatesRemaining: number | null;
+    poolActive: number;
+    canStart: boolean;
+    message?: string;
+  };
+  error?: string;
+};
+
 export function DebateSetup({ initialTopic = "" }: { initialTopic?: string }) {
   const router = useRouter();
   const [topic, setTopic] = useState(initialTopic);
@@ -53,9 +68,37 @@ export function DebateSetup({ initialTopic = "" }: { initialTopic?: string }) {
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ProviderStatus | null>(null);
+  const [providerLoading, setProviderLoading] = useState(true);
 
   const estimatedCalls = 7 + rounds * 3;
-  const canStart = topic.trim().length >= 4 && !submitting;
+  const estimatedDebatesLeft =
+    provider?.capacity?.requestsRemaining === null ||
+    provider?.capacity?.requestsRemaining === undefined
+      ? null
+      : Math.floor(provider.capacity.requestsRemaining / estimatedCalls);
+  const capacityBlocked = provider?.capacity?.canStart === false;
+  const canStart =
+    topic.trim().length >= 8 && !submitting && !capacityBlocked;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCapacity() {
+      try {
+        const response = await fetch("/api/provider/status", { cache: "no-store" });
+        const payload = (await response.json()) as ProviderStatus;
+        if (!cancelled) setProvider(payload);
+      } catch {
+        if (!cancelled) setProvider(null);
+      } finally {
+        if (!cancelled) setProviderLoading(false);
+      }
+    }
+    void loadCapacity();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const judge = useMemo(() => getModel(judgeModel), [judgeModel]);
 
@@ -120,7 +163,7 @@ export function DebateSetup({ initialTopic = "" }: { initialTopic?: string }) {
                 value={topic}
                 onChange={(event) => setTopic(event.target.value)}
                 placeholder="What should they argue about?"
-                maxLength={280}
+                maxLength={200}
                 autoFocus
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -352,7 +395,27 @@ export function DebateSetup({ initialTopic = "" }: { initialTopic?: string }) {
                 <span className="summary-label">Est. calls</span>
                 <span style={{ fontSize: 10, fontWeight: 700 }}>{estimatedCalls}</span>
               </div>
+              <div className="summary-row">
+                <span className="summary-label">Debates left</span>
+                <span style={{ fontSize: 10, fontWeight: 700 }}>
+                  {providerLoading
+                    ? "Checking…"
+                    : estimatedDebatesLeft === null
+                      ? "Unknown"
+                      : estimatedDebatesLeft}
+                </span>
+              </div>
             </div>
+
+            {provider?.capacity?.message ? (
+              <div
+                className={capacityBlocked ? "error-banner" : "caveat"}
+                role={capacityBlocked ? "alert" : undefined}
+                style={{ marginTop: 10 }}
+              >
+                {provider.capacity.message}
+              </div>
+            ) : null}
 
             <div style={{ marginTop: 15 }}>
               <label className="field-label" htmlFor="judge-model">

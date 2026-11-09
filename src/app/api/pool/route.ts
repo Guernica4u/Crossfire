@@ -4,6 +4,7 @@ import {
   getPoolSnapshot,
   noteContributionAttempt,
 } from "@/lib/pool";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
   if (!request.headers.get("content-type")?.includes("application/json")) {
     return Response.json({ error: "Send the contribution as JSON." }, { status: 415 });
   }
+
+  const limit = await enforceRateLimit(request, "pool-contribute", 8, 3600);
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   try {
     noteContributionAttempt();

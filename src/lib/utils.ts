@@ -75,6 +75,40 @@ export function excerpt(text: string, max = 160): string {
   return `${clean.slice(0, max).trimEnd()}…`;
 }
 
+/** Removes markup, key-like strings, and control characters from provider errors. */
+export function sanitizeErrorText(value: unknown, max = 280): string {
+  const text = String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/sk-[A-Za-z0-9._-]{8,}/g, "[redacted]")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trimEnd()}…`;
+}
+
+/**
+ * Keeps a spoken turn from turning into an essay. Only very long outputs are
+ * trimmed, and the cut happens on a sentence boundary when one is available.
+ */
+export function capSpeechLength(text: string, maxWords = 240): string {
+  const clean = text.trim();
+  if (!clean) return clean;
+  const words = clean.split(/\s+/);
+  if (words.length <= maxWords) return clean;
+
+  const candidate = words.slice(0, maxWords).join(" ");
+  const lastSentence = Math.max(
+    candidate.lastIndexOf(". "),
+    candidate.lastIndexOf("? "),
+    candidate.lastIndexOf("! "),
+  );
+  if (lastSentence > candidate.length * 0.6) {
+    return candidate.slice(0, lastSentence + 1).trimEnd();
+  }
+  return `${candidate.trimEnd()}…`;
+}
+
 export function pct(value: number): string {
   return `${Math.round(value)}%`;
 }

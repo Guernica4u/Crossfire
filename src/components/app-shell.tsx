@@ -89,6 +89,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 href={item.href}
                 className="nav-link"
                 data-active={isActive(pathname, item.href)}
+                aria-label={item.label}
+                title={item.label}
+                aria-current={isActive(pathname, item.href) ? "page" : undefined}
               >
                 <Icon />
                 <span>{item.label}</span>
@@ -114,6 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={item.href}
               className="nav-link"
               data-active={isActive(pathname, item.href)}
+              aria-current={isActive(pathname, item.href) ? "page" : undefined}
             >
               <Icon />
               {item.label}

@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { AGENT_PRESETS, DEFAULT_JUDGE_MODEL, JUDGE_PRESET, MODEL_CATALOG, getModel } from "@/lib/agents";
+import { createLocalD1, type LocalD1 } from "@/lib/local-d1";
 import type {
   AgentPosition,
   BeliefAgent,
@@ -35,6 +36,7 @@ type AppEnv = {
 
 const globalForDb = globalThis as unknown as {
   crossfireSchemaReady?: Promise<void>;
+  crossfireLocalDb?: LocalD1;
 };
 
 const SCHEMA = `
@@ -103,15 +105,40 @@ const SCHEMA = `
     last_used_at TEXT,
     last_checked_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 0,
+    window_start TEXT NOT NULL
+  );
 `;
 
-function binding(): D1Database {
-  const { env } = getCloudflareContext();
-  const database = (env as unknown as AppEnv).DB;
-  if (!database) {
-    throw new Error("The hosted DB binding is not configured.");
+export function databaseBackend(): "cloudflare-d1" | "sqlite-local" | "unknown" {
+  try {
+    const { env } = getCloudflareContext();
+    if ((env as unknown as AppEnv).DB) return "cloudflare-d1";
+  } catch {
+    // No Workers runtime.
   }
-  return database;
+  if (process.env.NODE_ENV !== "production") return "sqlite-local";
+  return "unknown";
+}
+
+function binding(): D1Database {
+  try {
+    const { env } = getCloudflareContext();
+    const database = (env as unknown as AppEnv).DB;
+    if (database) return database;
+  } catch {
+    // The Workers dev runtime is not available. Fall through to local SQLite.
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    globalForDb.crossfireLocalDb ??= createLocalD1();
+    return globalForDb.crossfireLocalDb as unknown as D1Database;
+  }
+
+  throw new Error("The hosted DB binding is not configured.");
 }
 
 async function getDb(): Promise<D1Database> {
@@ -221,8 +248,8 @@ export interface CreateDebateInput {
 export async function createDebate(input: CreateDebateInput): Promise<DebateView> {
   const database = await getDb();
   const topic = input.topic.trim();
-  if (topic.length < 4) throw new Error("Give the debate a topic with at least 4 characters.");
-  if (topic.length > 280) throw new Error("Keep the topic under 280 characters.");
+  if (topic.length < 8) throw new Error("Give the debate a topic with at least 8 characters.");
+  if (topic.length > 200) throw new Error("Keep the topic under 200 characters.");
   if (!Array.isArray(input.agents) || input.agents.length !== 3) {
     throw new Error("A debate needs exactly three debaters.");
   }
@@ -616,13 +643,15 @@ export async function getDebateStats(): Promise<{
   total: number;
   completed: number;
   live: number;
+  errors: number;
   debaters: number;
 }> {
   const row = await first<Row>(
     `SELECT
       COUNT(*) AS total,
       SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed,
-      SUM(CASE WHEN status IN ('active', 'paused', 'judging') THEN 1 ELSE 0 END) AS live
+      SUM(CASE WHEN status IN ('active', 'paused', 'judging') THEN 1 ELSE 0 END) AS live,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors
      FROM debates`,
   );
   const agents = await first<Row>("SELECT COUNT(*) AS count FROM debate_agents WHERE role = 'debater'");
@@ -630,9 +659,11 @@ export async function getDebateStats(): Promise<{
     total: Number(row?.total ?? 0),
     completed: Number(row?.completed ?? 0),
     live: Number(row?.live ?? 0),
+    errors: Number(row?.errors ?? 0),
     debaters: Number(agents?.count ?? 0),
   };
 }
+
 
 export async function getBeliefView(): Promise<BeliefView> {
   const debates = (
@@ -884,4 +915,43 @@ export async function countPoolKeys(): Promise<{ total: number; active: number }
     "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM pool_keys",
   );
   return { total: Number(row?.total ?? 0), active: Number(row?.active ?? 0) };
+}
+
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  retryAfterSeconds: number;
+}
+
+/** Fixed-window per-bucket limiter backed by D1. */
+export async function consumeRateLimit(
+  bucket: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<RateLimitResult> {
+  const now = Date.now();
+  const windowMs = Math.max(1, windowSeconds) * 1000;
+  const windowStart = new Date(Math.floor(now / windowMs) * windowMs).toISOString();
+
+  await execute(
+    `INSERT INTO rate_limits (bucket, count, window_start)
+     VALUES (?, 1, ?)
+     ON CONFLICT(bucket) DO UPDATE SET
+       count = CASE
+         WHEN rate_limits.window_start = excluded.window_start THEN rate_limits.count + 1
+         ELSE 1
+       END,
+       window_start = excluded.window_start`,
+    [bucket, windowStart],
+  );
+
+  const row = await first<Row>("SELECT count, window_start FROM rate_limits WHERE bucket = ?", [
+    bucket,
+  ]);
+  const count = Number(row?.count ?? 1);
+  return {
+    allowed: count <= limit,
+    remaining: Math.max(0, limit - count),
+    retryAfterSeconds: Math.max(1, Math.ceil((windowMs - (now % windowMs)) / 1000)),
+  };
 }
