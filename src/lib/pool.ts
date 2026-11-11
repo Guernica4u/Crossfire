@@ -142,7 +142,7 @@ async function fingerprint(key: string): Promise<string> {
 }
 
 function keyHint(key: string): string {
-  return `…${key.slice(-4)}`;
+  return `â€¦${key.slice(-4)}`;
 }
 
 function cleanContributor(value: unknown): string | null {
@@ -154,12 +154,15 @@ function cleanContributor(value: unknown): string | null {
   return clean || null;
 }
 
-function cleanLabel(value: unknown): string | null {
+export function publicLabel(value: unknown): string | null {
   const clean = String(value ?? "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 48);
-  return clean || null;
+  // OpenRouter lets a key's label be the key itself, sometimes masked.
+  // Never publish even a partial key through the pool snapshot.
+  if (!clean || /^sk-[A-Za-z0-9._-]+$/i.test(clean)) return null;
+  return clean;
 }
 
 async function inspectKey(key: string): Promise<{ label: string | null }> {
@@ -198,7 +201,7 @@ async function inspectKey(key: string): Promise<{ label: string | null }> {
   }
 
   return {
-    label: cleanLabel(data.label) ?? (data.is_free_tier === true ? "Free tier" : "Free models"),
+    label: publicLabel(data.label) ?? (data.is_free_tier === true ? "Free tier" : "Free models"),
   };
 }
 
@@ -261,7 +264,11 @@ export async function getPoolSnapshot(): Promise<PoolSnapshot> {
     total: counts.total,
     active: counts.active,
     capacity: MAX_POOL_KEYS,
-    keys: keys.filter((key) => key.status === "active"),
+    keys: keys
+      .filter((key) => key.status === "active")
+      // Older rows may have stored a key-like provider label before the
+      // insert check existed. Sanitize on read as well.
+      .map((key) => ({ ...key, label: publicLabel(key.label) })),
   };
 }
 
